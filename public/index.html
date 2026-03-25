@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>POPS | Controle de Datacenters</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="container">
+      <section id="login-section" class="card login-card hidden">
+        <h1>POPS</h1>
+        <p class="muted">Controle de localização de datacenters</p>
+
+        <form id="login-form" autocomplete="on">
+          <label for="email">E-mail</label>
+          <input id="email" name="email" type="email" required maxlength="200" />
+
+          <label for="password">Senha</label>
+          <input id="password" name="password" type="password" required maxlength="200" />
+
+          <button type="submit">Entrar</button>
+        </form>
+
+        <p id="login-message" class="message"></p>
+      </section>
+
+      <section id="dashboard-section" class="dashboard hidden">
+        <header class="dashboard-header">
+          <div>
+            <h2>Dashboard</h2>
+            <p class="muted" id="user-label"></p>
+          </div>
+          <button id="logout-btn" class="secondary">Sair</button>
+        </header>
+
+        <nav class="tabs">
+          <button class="tab-btn active" data-tab="search-tab">Buscar Datacenters</button>
+          <button class="tab-btn" data-tab="import-tab">Importar KML/KMZ</button>
+        </nav>
+
+        <section id="import-tab" class="tab-content card">
+          <h3>Importação</h3>
+          <p class="muted">
+            Selecione um arquivo KML ou KMZ com pontos de datacenter.
+          </p>
+
+          <form id="import-form">
+            <label for="kml-file">Arquivo</label>
+            <input id="kml-file" name="file" type="file" accept=".kml,.kmz" required />
+
+            <label for="mode">Modo de importação</label>
+            <select id="mode" name="mode">
+              <option value="skip_existing">Ignorar pontos já existentes</option>
+              <option value="overwrite">Apagar dados anteriores e importar tudo</option>
+            </select>
+
+            <button type="submit">Importar</button>
+          </form>
+
+          <p id="import-message" class="message"></p>
+        </section>
+
+        <section id="search-tab" class="tab-content active card">
+          <h3>Busca de Datacenters</h3>
+          <div class="stats-grid">
+            <article class="stat-card">
+              <p class="muted">Total cadastrado</p>
+              <strong id="stat-total">0</strong>
+            </article>
+            <article class="stat-card">
+              <p class="muted">Com cidade</p>
+              <strong id="stat-with-city">0</strong>
+            </article>
+            <article class="stat-card">
+              <p class="muted">Com bairro</p>
+              <strong id="stat-with-district">0</strong>
+            </article>
+            <article class="stat-card">
+              <p class="muted">Resultado atual</p>
+              <strong id="stat-filtered">0</strong>
+            </article>
+          </div>
+
+          <form id="search-form" class="filters">
+            <div>
+              <label for="q">Busca geral</label>
+              <input id="q" name="q" type="text" placeholder="Nome, cidade ou bairro" />
+            </div>
+            <div>
+              <label for="city">Cidade</label>
+              <input id="city" name="city" type="text" />
+            </div>
+            <div>
+              <label for="district">Bairro</label>
+              <input id="district" name="district" type="text" />
+            </div>
+            <button type="submit">Pesquisar</button>
+          </form>
+
+          <div class="results-map-grid">
+            <div>
+              <ul id="results" class="results"></ul>
+            </div>
+            <div id="map"></div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

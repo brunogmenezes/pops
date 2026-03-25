@@ -1,0 +1,30 @@
+{
+  "name": "pops-datacenter-localizacao",
+  "version": "1.0.0",
+  "description": "Sistema web seguro para controle de localização de datacenters com importação KML/KMZ",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@mapbox/togeojson": "^0.16.2",
+    "@xmldom/xmldom": "^0.8.10",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.4.1",
+    "express-session": "^1.18.1",
+    "helmet": "^7.1.0",
+    "jszip": "^3.10.1",
+    "multer": "^2.0.2",
+    "pg": "^8.13.0",
+    "connect-pg-simple": "^10.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}
