@@ -32,16 +32,54 @@
             <h2>Dashboard</h2>
             <p class="muted" id="user-label"></p>
           </div>
-          <button id="logout-btn" class="secondary">Sair</button>
+          <div class="header-actions">
+            <label class="theme-control" for="theme-select">Tema</label>
+            <select id="theme-select" class="theme-select" aria-label="Selecionar tema">
+              <option value="dark">Escuro</option>
+              <option value="light">Claro</option>
+            </select>
+            <button id="logout-btn" class="secondary">Sair</button>
+          </div>
         </header>
 
         <nav class="tabs">
           <button class="tab-btn active" data-tab="search-tab">Buscar Datacenters</button>
-          <button class="tab-btn" data-tab="import-tab">Importar KML/KMZ</button>
+          <button class="tab-btn" data-tab="import-tab">Adicionar Datacenter</button>
         </nav>
 
         <section id="import-tab" class="tab-content card">
-          <h3>Importação</h3>
+          <h3>Cadastro manual</h3>
+          <p class="muted">Adicione um datacenter sem usar arquivo de importação.</p>
+
+          <form id="manual-form" class="manual-form">
+            <div>
+              <label for="manual-name">Nome</label>
+              <input id="manual-name" name="name" type="text" maxlength="200" required />
+            </div>
+            <div>
+              <label for="manual-city">Cidade</label>
+              <input id="manual-city" name="city" type="text" maxlength="200" />
+            </div>
+            <div>
+              <label for="manual-district">Bairro</label>
+              <input id="manual-district" name="district" type="text" maxlength="200" />
+            </div>
+            <div>
+              <label for="manual-latitude">Latitude</label>
+              <input id="manual-latitude" name="latitude" type="number" step="any" min="-90" max="90" required />
+            </div>
+            <div>
+              <label for="manual-longitude">Longitude</label>
+              <input id="manual-longitude" name="longitude" type="number" step="any" min="-180" max="180" required />
+            </div>
+            <button type="submit">Cadastrar datacenter</button>
+          </form>
+
+          <p id="manual-message" class="message"></p>
+
+          <hr class="section-divider" />
+
+          <h3>Importação KML/KMZ</h3>
           <p class="muted">
             Selecione um arquivo KML ou KMZ com pontos de datacenter.
           </p>

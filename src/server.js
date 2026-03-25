@@ -108,11 +108,21 @@ const upload = multer({
 
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-app.get('/api/me', requireAuth, (req, res) => {
-  res.json({
-    id: req.session.userId,
-    email: req.session.userEmail,
-  });
+app.get('/api/me', requireAuth, async (req, res) => {
+  try {
+    if (!req.session.userTheme && req.session.userId) {
+      req.session.userTheme = await getUserThemePreference(req.session.userId);
+    }
+
+    return res.json({
+      id: req.session.userId,
+      email: req.session.userEmail,
+      themePreference: req.session.userTheme || 'dark',
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar usuário autenticado' });
+  }
 });
 
 app.get('/api/csrf', requireAuth, (req, res) => {
@@ -141,12 +151,37 @@ app.post('/api/login', loginLimiter, async (req, res) => {
 
     req.session.userId = user.id;
     req.session.userEmail = user.email;
+    req.session.userTheme = await getUserThemePreference(user.id);
     const csrfToken = getOrCreateCsrfToken(req);
 
-    return res.json({ ok: true, csrfToken });
+    return res.json({ ok: true, csrfToken, themePreference: req.session.userTheme });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro interno no login' });
+  }
+});
+
+app.post('/api/preferences/theme', requireAuth, requireCsrf, async (req, res) => {
+  try {
+    const theme = String(req.body.theme || '').trim().toLowerCase();
+    if (!['light', 'dark'].includes(theme)) {
+      return res.status(400).json({ error: 'Tema inválido' });
+    }
+
+    try {
+      await query('UPDATE users SET theme_preference = $1 WHERE id = $2', [theme, req.session.userId]);
+      req.session.userTheme = theme;
+      return res.json({ ok: true, themePreference: theme });
+    } catch (dbError) {
+      if (dbError?.code === '42703') {
+        req.session.userTheme = theme;
+        return res.json({ ok: true, themePreference: theme, persisted: false });
+      }
+      throw dbError;
+    }
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao salvar preferência de tema' });
   }
 });
 
@@ -219,6 +254,47 @@ app.get('/api/datacenters/stats', requireAuth, async (_req, res) => {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao carregar estatísticas' });
+  }
+});
+
+app.post('/api/datacenters', requireAuth, requireCsrf, async (req, res) => {
+  try {
+    const name = normalizeText(req.body.name);
+    const city = normalizeText(req.body.city);
+    const district = normalizeText(req.body.district);
+    const latitude = Number(req.body.latitude);
+    const longitude = Number(req.body.longitude);
+
+    if (!name) {
+      return res.status(400).json({ error: 'Nome é obrigatório' });
+    }
+
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+      return res.status(400).json({ error: 'Latitude inválida' });
+    }
+
+    if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+      return res.status(400).json({ error: 'Longitude inválida' });
+    }
+
+    const result = await query(
+      `
+        INSERT INTO datacenters (name, city, district, latitude, longitude)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (name, latitude, longitude) DO NOTHING
+        RETURNING id, name, city, district, latitude, longitude, created_at
+      `,
+      [name, city || null, district || null, latitude, longitude]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(409).json({ error: 'Datacenter já cadastrado com mesmo nome e coordenadas' });
+    }
+
+    return res.status(201).json({ ok: true, item: result.rows[0] });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao cadastrar datacenter' });
   }
 });
 
@@ -421,6 +497,19 @@ function parseDescriptionFields(description) {
 
 function normalizeText(value) {
   return String(value || '').trim().slice(0, 200);
+}
+
+async function getUserThemePreference(userId) {
+  try {
+    const result = await query('SELECT theme_preference FROM users WHERE id = $1', [userId]);
+    const theme = String(result.rows?.[0]?.theme_preference || 'dark').toLowerCase();
+    return ['light', 'dark'].includes(theme) ? theme : 'dark';
+  } catch (error) {
+    if (error?.code === '42703') {
+      return 'dark';
+    }
+    throw error;
+  }
 }
 
 function deriveCityFromName(name) {

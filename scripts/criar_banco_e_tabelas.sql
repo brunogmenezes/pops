@@ -43,8 +43,12 @@ CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   email TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
+  theme_preference TEXT NOT NULL DEFAULT 'dark',
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS theme_preference TEXT NOT NULL DEFAULT 'dark';
 
 -- 5) Tabela de datacenters
 CREATE TABLE IF NOT EXISTS datacenters (

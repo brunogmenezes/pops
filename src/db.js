@@ -28,6 +28,11 @@ async function initDatabase() {
     `);
 
     await query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS theme_preference TEXT NOT NULL DEFAULT 'dark';
+    `);
+
+    await query(`
       CREATE TABLE IF NOT EXISTS datacenters (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,

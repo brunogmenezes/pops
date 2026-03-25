@@ -1,5 +1,6 @@
 :root {
   --bg: #0b1020;
+  --bg-top: #1a2a52;
   --panel: #131c33;
   --panel-2: #1b2747;
   --text: #e6ebff;
@@ -8,6 +9,27 @@
   --primary-hover: #2f75ff;
   --danger: #ef5350;
   --border: #2b3c6b;
+  --card-bg: rgba(19, 28, 51, 0.92);
+  --list-hover: #202f57;
+  --list-active: #2a3f75;
+  --shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+}
+
+:root[data-theme='light'] {
+  --bg: #eef3ff;
+  --bg-top: #dce8ff;
+  --panel: #ffffff;
+  --panel-2: #f5f8ff;
+  --text: #1b2a4f;
+  --muted: #607099;
+  --primary: #3a75e6;
+  --primary-hover: #2d63c8;
+  --danger: #d33f3c;
+  --border: #c8d6f5;
+  --card-bg: rgba(255, 255, 255, 0.95);
+  --list-hover: #eaf0ff;
+  --list-active: #dde8ff;
+  --shadow: 0 10px 25px rgba(35, 57, 105, 0.12);
 }
 
 * {
@@ -16,7 +38,7 @@
 
 body {
   margin: 0;
-  background: radial-gradient(circle at top, #1a2a52, var(--bg));
+  background: radial-gradient(circle at top, var(--bg-top), var(--bg));
   color: var(--text);
   font-family: Inter, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
 }
@@ -28,10 +50,10 @@ body {
 }
 
 .card {
-  background: rgba(19, 28, 51, 0.92);
+  background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: 14px;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow);
 }
 
 .login-card {
@@ -95,6 +117,23 @@ button.secondary {
   color: #c9d5ff;
 }
 
+.section-divider {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 18px 0;
+}
+
+.manual-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.manual-form button {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+}
+
 .dashboard {
   display: flex;
   flex-direction: column;
@@ -105,6 +144,22 @@ button.secondary {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.theme-control {
+  margin: 0;
+  color: var(--muted);
+}
+
+.theme-select {
+  width: auto;
+  margin: 0;
 }
 
 .tabs {
@@ -167,11 +222,11 @@ button.secondary {
 }
 
 .results li:hover {
-  background: #202f57;
+  background: var(--list-hover);
 }
 
 .results li.active {
-  background: #2a3f75;
+  background: var(--list-active);
 }
 
 .results li:last-child {
@@ -221,7 +276,16 @@ button.secondary {
     grid-template-columns: 1fr;
   }
 
+  .manual-form {
+    grid-template-columns: 1fr;
+  }
+
   .stats-grid {
     grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+
+  .header-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 }

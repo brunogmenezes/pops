@@ -14,12 +14,17 @@ const userLabel = document.getElementById('user-label');
 const logoutBtn = document.getElementById('logout-btn');
 const importForm = document.getElementById('import-form');
 const importMessage = document.getElementById('import-message');
+const manualForm = document.getElementById('manual-form');
+const manualMessage = document.getElementById('manual-message');
 const searchForm = document.getElementById('search-form');
 const resultsEl = document.getElementById('results');
 const statTotalEl = document.getElementById('stat-total');
 const statWithCityEl = document.getElementById('stat-with-city');
 const statWithDistrictEl = document.getElementById('stat-with-district');
 const statFilteredEl = document.getElementById('stat-filtered');
+const themeSelect = document.getElementById('theme-select');
+
+let currentUserEmail = '';
 
 setupTabs();
 initMap();
@@ -37,6 +42,9 @@ async function bootstrap() {
     const csrfResp = await fetch('/api/csrf');
     const csrfData = await csrfResp.json();
     csrfToken = csrfData.csrfToken || '';
+    currentUserEmail = me.email || '';
+    const initialTheme = getPreferredTheme(currentUserEmail, me.themePreference);
+    applyTheme(initialTheme);
 
     showDashboard(me.email);
     await loadStats();
@@ -70,6 +78,9 @@ loginForm.addEventListener('submit', async (event) => {
     }
 
     csrfToken = data.csrfToken || '';
+  currentUserEmail = payload.email || '';
+  const initialTheme = getPreferredTheme(currentUserEmail, data.themePreference);
+  applyTheme(initialTheme);
     showDashboard(payload.email);
     loginMessage.textContent = '';
     loginForm.reset();
@@ -88,7 +99,48 @@ logoutBtn.addEventListener('click', async () => {
     });
   } finally {
     csrfToken = '';
+    currentUserEmail = '';
     showLogin();
+  }
+});
+
+themeSelect.addEventListener('change', async (event) => {
+  const theme = String(event.target.value || '').toLowerCase();
+  if (!['light', 'dark'].includes(theme)) {
+    return;
+  }
+
+  applyTheme(theme);
+  if (currentUserEmail) {
+    localStorage.setItem(getThemeStorageKey(currentUserEmail), theme);
+  }
+
+  if (!csrfToken) {
+    return;
+  }
+
+  try {
+    const resp = await fetch('/api/preferences/theme', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-csrf-token': csrfToken,
+      },
+      body: JSON.stringify({ theme }),
+    });
+
+    if (!resp.ok) {
+      return;
+    }
+
+    const data = await resp.json();
+    const savedTheme = String(data.themePreference || theme).toLowerCase();
+    applyTheme(savedTheme);
+    if (currentUserEmail) {
+      localStorage.setItem(getThemeStorageKey(currentUserEmail), savedTheme);
+    }
+  } catch {
+    // mantém fallback local
   }
 });
 
@@ -126,6 +178,45 @@ importForm.addEventListener('submit', async (event) => {
     await runSearch();
   } catch {
     importMessage.textContent = 'Erro de rede na importação';
+  }
+});
+
+manualForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  manualMessage.textContent = 'Salvando...';
+
+  const formData = new FormData(manualForm);
+  const payload = {
+    name: String(formData.get('name') || '').trim(),
+    city: String(formData.get('city') || '').trim(),
+    district: String(formData.get('district') || '').trim(),
+    latitude: String(formData.get('latitude') || '').trim(),
+    longitude: String(formData.get('longitude') || '').trim(),
+  };
+
+  try {
+    const resp = await fetch('/api/datacenters', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-csrf-token': csrfToken,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) {
+      manualMessage.textContent = data.error || 'Falha ao cadastrar datacenter';
+      return;
+    }
+
+    manualMessage.textContent = 'Datacenter cadastrado com sucesso.';
+    manualForm.reset();
+    selectedDatacenterId = data.item?.id || null;
+    await loadStats();
+    await runSearch();
+  } catch {
+    manualMessage.textContent = 'Erro de rede ao cadastrar datacenter';
   }
 });
 
@@ -349,6 +440,32 @@ function showDashboard(email) {
   loginSection.classList.add('hidden');
   dashboardSection.classList.remove('hidden');
   setTimeout(() => map.invalidateSize(), 120);
+}
+
+function getThemeStorageKey(email) {
+  return `pops.theme.${String(email || '').toLowerCase()}`;
+}
+
+function getPreferredTheme(email, serverTheme) {
+  const fromServer = String(serverTheme || '').toLowerCase();
+  if (['light', 'dark'].includes(fromServer)) {
+    return fromServer;
+  }
+
+  if (!email) {
+    return 'dark';
+  }
+
+  const fromLocal = String(localStorage.getItem(getThemeStorageKey(email)) || '').toLowerCase();
+  return ['light', 'dark'].includes(fromLocal) ? fromLocal : 'dark';
+}
+
+function applyTheme(theme) {
+  const normalized = ['light', 'dark'].includes(theme) ? theme : 'dark';
+  document.documentElement.setAttribute('data-theme', normalized);
+  if (themeSelect.value !== normalized) {
+    themeSelect.value = normalized;
+  }
 }
 
 function escapeHtml(value) {
