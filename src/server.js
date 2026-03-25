@@ -19,6 +19,13 @@ const PgSession = require('connect-pg-simple')(session);
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const isProduction = process.env.NODE_ENV === 'production';
+const createSessionTableIfMissing = process.env.CREATE_SESSION_TABLE_IF_MISSING === 'true';
+const DEFAULT_PERMISSIONS = Object.freeze({
+  canImport: false,
+  canCreate: false,
+  canEdit: false,
+  canDelete: false,
+});
 
 app.use(
   helmet({
@@ -54,7 +61,8 @@ app.use(
     store: new PgSession({
       pool,
       tableName: 'user_sessions',
-      createTableIfMissing: true,
+      createTableIfMissing: createSessionTableIfMissing,
+      errorLog: (error) => console.error('Erro no armazenamento de sessão (PostgreSQL):', error),
     }),
     name: 'pops.sid',
     secret: process.env.SESSION_SECRET || 'dev-secret-change-this',
@@ -93,6 +101,28 @@ function requireCsrf(req, res, next) {
   return next();
 }
 
+function requireAdmin(req, res, next) {
+  if (req.session?.isAdmin) {
+    return next();
+  }
+  return res.status(403).json({ error: 'Acesso restrito ao administrador' });
+}
+
+function requirePermission(permissionField, label) {
+  return (req, res, next) => {
+    if (req.session?.isAdmin) {
+      return next();
+    }
+
+    const permissions = req.session?.permissions || DEFAULT_PERMISSIONS;
+    if (permissions[permissionField]) {
+      return next();
+    }
+
+    return res.status(403).json({ error: `Sem permissão para ${label}` });
+  };
+}
+
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 8,
@@ -114,10 +144,22 @@ app.get('/api/me', requireAuth, async (req, res) => {
       req.session.userTheme = await getUserThemePreference(req.session.userId);
     }
 
+    if (!req.session.permissions || req.session.isAdmin === undefined) {
+      const access = await getUserAccessContext(req.session.userId, req.session.userEmail);
+      req.session.isAdmin = access.isAdmin;
+      req.session.permissions = access.permissions;
+      req.session.groupId = access.groupId;
+      req.session.groupName = access.groupName;
+    }
+
     return res.json({
       id: req.session.userId,
       email: req.session.userEmail,
       themePreference: req.session.userTheme || 'dark',
+      isAdmin: Boolean(req.session.isAdmin),
+      groupId: req.session.groupId || null,
+      groupName: req.session.groupName || null,
+      permissions: req.session.permissions || { ...DEFAULT_PERMISSIONS },
     });
   } catch (error) {
     console.error(error);
@@ -152,9 +194,22 @@ app.post('/api/login', loginLimiter, async (req, res) => {
     req.session.userId = user.id;
     req.session.userEmail = user.email;
     req.session.userTheme = await getUserThemePreference(user.id);
+    const access = await getUserAccessContext(user.id, user.email);
+    req.session.isAdmin = access.isAdmin;
+    req.session.permissions = access.permissions;
+    req.session.groupId = access.groupId;
+    req.session.groupName = access.groupName;
     const csrfToken = getOrCreateCsrfToken(req);
 
-    return res.json({ ok: true, csrfToken, themePreference: req.session.userTheme });
+    return res.json({
+      ok: true,
+      csrfToken,
+      themePreference: req.session.userTheme,
+      isAdmin: access.isAdmin,
+      groupId: access.groupId,
+      groupName: access.groupName,
+      permissions: access.permissions,
+    });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro interno no login' });
@@ -193,6 +248,215 @@ app.post('/api/logout', requireAuth, requireCsrf, (req, res) => {
     res.clearCookie('pops.sid');
     return res.json({ ok: true });
   });
+});
+
+app.get('/api/admin/groups', requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    try {
+      const result = await query(
+        `
+          SELECT
+            g.id,
+            g.name,
+            g.can_import,
+            g.can_create,
+            g.can_edit,
+            g.can_delete,
+            g.created_at,
+            COUNT(u.id)::int AS users_count
+          FROM user_groups g
+          LEFT JOIN users u ON u.group_id = g.id
+          GROUP BY g.id, g.name, g.can_import, g.can_create, g.can_edit, g.can_delete, g.created_at
+          ORDER BY name ASC
+        `
+      );
+      return res.json({ items: result.rows });
+    } catch (error) {
+      if (error?.code === '42703') {
+        const fallback = await query(
+          `
+            SELECT
+              g.id,
+              g.name,
+              g.can_import,
+              g.can_create,
+              g.can_edit,
+              g.can_delete,
+              g.created_at,
+              0::int AS users_count
+            FROM user_groups g
+            ORDER BY name ASC
+          `
+        );
+        return res.json({ items: fallback.rows });
+      }
+      throw error;
+    }
+  } catch (error) {
+    if (error?.code === '42P01') {
+      return res.json({ items: [] });
+    }
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar grupos' });
+  }
+});
+
+app.post('/api/admin/groups', requireAuth, requireCsrf, requireAdmin, async (req, res) => {
+  try {
+    const name = normalizeText(req.body.name);
+    const canImport = toBoolean(req.body.canImport);
+    const canCreate = toBoolean(req.body.canCreate);
+    const canEdit = toBoolean(req.body.canEdit);
+    const canDelete = toBoolean(req.body.canDelete);
+
+    if (!name) {
+      return res.status(400).json({ error: 'Nome do grupo é obrigatório' });
+    }
+
+    const result = await query(
+      `
+        INSERT INTO user_groups (name, can_import, can_create, can_edit, can_delete)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, name, can_import, can_create, can_edit, can_delete, created_at
+      `,
+      [name, canImport, canCreate, canEdit, canDelete]
+    );
+
+    return res.status(201).json({ ok: true, item: result.rows[0] });
+  } catch (error) {
+    if (error?.code === '23505') {
+      return res.status(409).json({ error: 'Já existe um grupo com esse nome' });
+    }
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao criar grupo' });
+  }
+});
+
+app.put('/api/admin/groups/:id', requireAuth, requireCsrf, requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'ID de grupo inválido' });
+    }
+
+    const name = normalizeText(req.body.name);
+    const canImport = toBoolean(req.body.canImport);
+    const canCreate = toBoolean(req.body.canCreate);
+    const canEdit = toBoolean(req.body.canEdit);
+    const canDelete = toBoolean(req.body.canDelete);
+
+    if (!name) {
+      return res.status(400).json({ error: 'Nome do grupo é obrigatório' });
+    }
+
+    const result = await query(
+      `
+        UPDATE user_groups
+        SET name = $1,
+            can_import = $2,
+            can_create = $3,
+            can_edit = $4,
+            can_delete = $5
+        WHERE id = $6
+        RETURNING id, name, can_import, can_create, can_edit, can_delete, created_at
+      `,
+      [name, canImport, canCreate, canEdit, canDelete, id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Grupo não encontrado' });
+    }
+
+    return res.json({ ok: true, item: result.rows[0] });
+  } catch (error) {
+    if (error?.code === '23505') {
+      return res.status(409).json({ error: 'Já existe um grupo com esse nome' });
+    }
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao editar grupo' });
+  }
+});
+
+app.delete('/api/admin/groups/:id', requireAuth, requireCsrf, requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'ID de grupo inválido' });
+    }
+
+    let totalUsers = 0;
+    try {
+      const inUse = await query('SELECT COUNT(*)::int AS total FROM users WHERE group_id = $1', [id]);
+      totalUsers = Number(inUse.rows?.[0]?.total || 0);
+    } catch (error) {
+      if (error?.code !== '42703') {
+        throw error;
+      }
+    }
+
+    if (totalUsers > 0) {
+      return res.status(409).json({ error: 'Não é possível excluir: há usuários associados a este grupo' });
+    }
+
+    const result = await query('DELETE FROM user_groups WHERE id = $1', [id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Grupo não encontrado' });
+    }
+
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao excluir grupo' });
+  }
+});
+
+app.post('/api/admin/users', requireAuth, requireCsrf, requireAdmin, async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const password = String(req.body.password || '').trim();
+    const groupId = Number(req.body.groupId);
+
+    if (!email || email.length > 200 || !email.includes('@')) {
+      return res.status(400).json({ error: 'E-mail inválido' });
+    }
+
+    if (!password || password.length < 8 || password.length > 200) {
+      return res.status(400).json({ error: 'Senha deve ter entre 8 e 200 caracteres' });
+    }
+
+    if (!Number.isInteger(groupId) || groupId <= 0) {
+      return res.status(400).json({ error: 'Grupo inválido' });
+    }
+
+    const groupExists = await query('SELECT id FROM user_groups WHERE id = $1', [groupId]);
+    if (groupExists.rowCount === 0) {
+      return res.status(400).json({ error: 'Grupo não encontrado' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const result = await query(
+      `
+        INSERT INTO users (email, password_hash, group_id, is_admin)
+        VALUES ($1, $2, $3, false)
+        RETURNING id, email, group_id, created_at
+      `,
+      [email, passwordHash, groupId]
+    );
+
+    return res.status(201).json({ ok: true, item: result.rows[0] });
+  } catch (error) {
+    if (error?.code === '42703') {
+      return res.status(500).json({
+        error:
+          'Schema desatualizado: coluna users.group_id não existe. Execute a atualização do banco para habilitar associação de grupo no usuário.',
+      });
+    }
+    if (error?.code === '23505') {
+      return res.status(409).json({ error: 'E-mail já cadastrado' });
+    }
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao criar usuário' });
+  }
 });
 
 app.get('/api/datacenters', requireAuth, async (req, res) => {
@@ -257,7 +521,7 @@ app.get('/api/datacenters/stats', requireAuth, async (_req, res) => {
   }
 });
 
-app.post('/api/datacenters', requireAuth, requireCsrf, async (req, res) => {
+app.post('/api/datacenters', requireAuth, requireCsrf, requirePermission('canCreate', 'inserir datacenter'), async (req, res) => {
   try {
     const name = normalizeText(req.body.name);
     const city = normalizeText(req.body.city);
@@ -298,6 +562,78 @@ app.post('/api/datacenters', requireAuth, requireCsrf, async (req, res) => {
   }
 });
 
+app.put('/api/datacenters/:id', requireAuth, requireCsrf, requirePermission('canEdit', 'editar datacenter'), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'ID inválido' });
+    }
+
+    const name = normalizeText(req.body.name);
+    const city = normalizeText(req.body.city);
+    const district = normalizeText(req.body.district);
+    const latitude = Number(req.body.latitude);
+    const longitude = Number(req.body.longitude);
+
+    if (!name) {
+      return res.status(400).json({ error: 'Nome é obrigatório' });
+    }
+
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+      return res.status(400).json({ error: 'Latitude inválida' });
+    }
+
+    if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+      return res.status(400).json({ error: 'Longitude inválida' });
+    }
+
+    const result = await query(
+      `
+        UPDATE datacenters
+        SET name = $1,
+            city = $2,
+            district = $3,
+            latitude = $4,
+            longitude = $5
+        WHERE id = $6
+        RETURNING id, name, city, district, latitude, longitude, created_at
+      `,
+      [name, city || null, district || null, latitude, longitude, id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Datacenter não encontrado' });
+    }
+
+    return res.json({ ok: true, item: result.rows[0] });
+  } catch (error) {
+    if (error?.code === '23505') {
+      return res.status(409).json({ error: 'Já existe datacenter com mesmo nome e coordenadas' });
+    }
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao editar datacenter' });
+  }
+});
+
+app.delete('/api/datacenters/:id', requireAuth, requireCsrf, requirePermission('canDelete', 'excluir datacenter'), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'ID inválido' });
+    }
+
+    const result = await query('DELETE FROM datacenters WHERE id = $1', [id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Datacenter não encontrado' });
+    }
+
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao excluir datacenter' });
+  }
+});
+
 app.get('/api/datacenters/:id', requireAuth, async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -321,7 +657,7 @@ app.get('/api/datacenters/:id', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/import', requireAuth, requireCsrf, upload.single('file'), async (req, res) => {
+app.post('/api/import', requireAuth, requireCsrf, requirePermission('canImport', 'importar dados'), upload.single('file'), async (req, res) => {
   const mode = String(req.body.mode || 'skip_existing').trim();
 
   if (!req.file) {
@@ -497,6 +833,69 @@ function parseDescriptionFields(description) {
 
 function normalizeText(value) {
   return String(value || '').trim().slice(0, 200);
+}
+
+function toBoolean(value) {
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value || '').trim().toLowerCase();
+  return ['1', 'true', 'on', 'yes', 'sim'].includes(normalized);
+}
+
+async function getUserAccessContext(userId, userEmail = '') {
+  const adminEmail = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+  const isEnvAdmin = Boolean(adminEmail) && String(userEmail || '').trim().toLowerCase() === adminEmail;
+
+  try {
+    const result = await query(
+      `
+        SELECT
+          u.id,
+          COALESCE(u.is_admin, false) AS is_admin,
+          u.group_id,
+          g.name AS group_name,
+          COALESCE(g.can_import, false) AS can_import,
+          COALESCE(g.can_create, false) AS can_create,
+          COALESCE(g.can_edit, false) AS can_edit,
+          COALESCE(g.can_delete, false) AS can_delete
+        FROM users u
+        LEFT JOIN user_groups g ON g.id = u.group_id
+        WHERE u.id = $1
+      `,
+      [userId]
+    );
+
+    if (result.rowCount === 0) {
+      return {
+        isAdmin: isEnvAdmin,
+        groupId: null,
+        groupName: null,
+        permissions: { ...DEFAULT_PERMISSIONS },
+      };
+    }
+
+    const row = result.rows[0];
+    return {
+      isAdmin: isEnvAdmin || Boolean(row.is_admin),
+      groupId: row.group_id || null,
+      groupName: row.group_name || null,
+      permissions: {
+        canImport: Boolean(row.can_import),
+        canCreate: Boolean(row.can_create),
+        canEdit: Boolean(row.can_edit),
+        canDelete: Boolean(row.can_delete),
+      },
+    };
+  } catch (error) {
+    if (error?.code === '42P01' || error?.code === '42703') {
+      return {
+        isAdmin: isEnvAdmin,
+        groupId: null,
+        groupName: null,
+        permissions: { ...DEFAULT_PERMISSIONS },
+      };
+    }
+    throw error;
+  }
 }
 
 async function getUserThemePreference(userId) {

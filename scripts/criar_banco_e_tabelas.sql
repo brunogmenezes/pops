@@ -38,11 +38,24 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'DB_NAME')
 -- 3) Conecta no banco da aplicação
 \connect :DB_NAME
 
--- 4) Tabela de usuários
+-- 4) Tabela de grupos de usuários (permissões)
+CREATE TABLE IF NOT EXISTS user_groups (
+  id SERIAL PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  can_import BOOLEAN NOT NULL DEFAULT false,
+  can_create BOOLEAN NOT NULL DEFAULT false,
+  can_edit BOOLEAN NOT NULL DEFAULT false,
+  can_delete BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- 5) Tabela de usuários
 CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   email TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
+  is_admin BOOLEAN NOT NULL DEFAULT false,
+  group_id INTEGER,
   theme_preference TEXT NOT NULL DEFAULT 'dark',
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -50,7 +63,33 @@ CREATE TABLE IF NOT EXISTS users (
 ALTER TABLE users
   ADD COLUMN IF NOT EXISTS theme_preference TEXT NOT NULL DEFAULT 'dark';
 
--- 5) Tabela de datacenters
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS group_id INTEGER;
+
+DO
+$$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'users_group_id_fkey'
+  ) THEN
+    ALTER TABLE users
+      ADD CONSTRAINT users_group_id_fkey
+      FOREIGN KEY (group_id)
+      REFERENCES user_groups(id)
+      ON UPDATE CASCADE
+      ON DELETE SET NULL;
+  END IF;
+END;
+$$;
+
+CREATE INDEX IF NOT EXISTS idx_users_group_id ON users (group_id);
+
+-- 6) Tabela de datacenters
 CREATE TABLE IF NOT EXISTS datacenters (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
@@ -65,7 +104,7 @@ CREATE TABLE IF NOT EXISTS datacenters (
 CREATE INDEX IF NOT EXISTS idx_datacenters_city ON datacenters (city);
 CREATE INDEX IF NOT EXISTS idx_datacenters_district ON datacenters (district);
 
--- 6) Tabela de sessões (compatível com express-session + connect-pg-simple)
+-- 7) Tabela de sessões (compatível com express-session + connect-pg-simple)
 CREATE TABLE IF NOT EXISTS user_sessions (
   sid varchar NOT NULL COLLATE "default",
   sess json NOT NULL,
@@ -88,7 +127,7 @@ $$;
 
 CREATE INDEX IF NOT EXISTS idx_user_sessions_expire ON user_sessions (expire);
 
--- 7) Permissões para o usuário da aplicação
+-- 8) Permissões para o usuário da aplicação
 GRANT CONNECT ON DATABASE :DB_NAME TO :DB_USER;
 GRANT USAGE ON SCHEMA public TO :DB_USER;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO :DB_USER;
@@ -98,6 +137,6 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT USAGE, SELECT ON SEQUENCES TO :DB_USER;
 
--- 8) Verificação rápida
+-- 9) Verificação rápida
 SELECT 'Banco/tabelas criados com sucesso.' AS status;
 SELECT COUNT(*) AS total_datacenters FROM datacenters;

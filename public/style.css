@@ -134,6 +134,130 @@ button.secondary {
   margin-top: 6px;
 }
 
+.admin-section {
+  margin-top: 4px;
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.admin-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.admin-card h4 {
+  margin: 2px 0 10px;
+}
+
+.permission-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.group-form-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+
+.group-form-actions button {
+  width: auto;
+  margin-top: 0;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.checkbox-row input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.group-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.group-list li {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.group-list li:last-child {
+  border-bottom: 0;
+}
+
+.group-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.group-row small {
+  display: block;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.group-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.group-actions .icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 1000;
+}
+
+.modal-card {
+  width: min(760px, 100%);
+  padding: 18px;
+}
+
+.modal-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.modal-actions button {
+  width: auto;
+  margin-top: 0;
+}
+
 .dashboard {
   display: flex;
   flex-direction: column;
@@ -233,6 +357,34 @@ button.secondary {
   border-bottom: none;
 }
 
+.result-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.result-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.icon-btn {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0;
+  margin: 0;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  line-height: 1;
+}
+
+.icon-btn:hover {
+  background: var(--list-hover);
+}
+
 #map {
   min-height: 500px;
   border-radius: 12px;
@@ -277,6 +429,10 @@ button.secondary {
   }
 
   .manual-form {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-grid {
     grid-template-columns: 1fr;
   }
 

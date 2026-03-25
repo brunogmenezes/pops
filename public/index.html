@@ -45,59 +45,131 @@
         <nav class="tabs">
           <button class="tab-btn active" data-tab="search-tab">Buscar Datacenters</button>
           <button class="tab-btn" data-tab="import-tab">Adicionar Datacenter</button>
+          <button id="admin-tab-btn" class="tab-btn hidden" data-tab="admin-tab">Administração</button>
         </nav>
 
         <section id="import-tab" class="tab-content card">
-          <h3>Cadastro manual</h3>
-          <p class="muted">Adicione um datacenter sem usar arquivo de importação.</p>
+          <section id="manual-section">
+            <h3>Cadastro manual</h3>
+            <p class="muted">Adicione um datacenter sem usar arquivo de importação.</p>
 
-          <form id="manual-form" class="manual-form">
-            <div>
-              <label for="manual-name">Nome</label>
-              <input id="manual-name" name="name" type="text" maxlength="200" required />
-            </div>
-            <div>
-              <label for="manual-city">Cidade</label>
-              <input id="manual-city" name="city" type="text" maxlength="200" />
-            </div>
-            <div>
-              <label for="manual-district">Bairro</label>
-              <input id="manual-district" name="district" type="text" maxlength="200" />
-            </div>
-            <div>
-              <label for="manual-latitude">Latitude</label>
-              <input id="manual-latitude" name="latitude" type="number" step="any" min="-90" max="90" required />
-            </div>
-            <div>
-              <label for="manual-longitude">Longitude</label>
-              <input id="manual-longitude" name="longitude" type="number" step="any" min="-180" max="180" required />
-            </div>
-            <button type="submit">Cadastrar datacenter</button>
-          </form>
+            <form id="manual-form" class="manual-form">
+              <div>
+                <label for="manual-name">Nome</label>
+                <input id="manual-name" name="name" type="text" maxlength="200" required />
+              </div>
+              <div>
+                <label for="manual-city">Cidade</label>
+                <input id="manual-city" name="city" type="text" maxlength="200" />
+              </div>
+              <div>
+                <label for="manual-district">Bairro</label>
+                <input id="manual-district" name="district" type="text" maxlength="200" />
+              </div>
+              <div>
+                <label for="manual-latitude">Latitude</label>
+                <input id="manual-latitude" name="latitude" type="number" step="any" min="-90" max="90" required />
+              </div>
+              <div>
+                <label for="manual-longitude">Longitude</label>
+                <input id="manual-longitude" name="longitude" type="number" step="any" min="-180" max="180" required />
+              </div>
+              <button type="submit">Cadastrar datacenter</button>
+            </form>
 
-          <p id="manual-message" class="message"></p>
+            <p id="manual-message" class="message"></p>
+          </section>
 
-          <hr class="section-divider" />
+          <hr id="import-section-divider" class="section-divider" />
 
-          <h3>Importação KML/KMZ</h3>
-          <p class="muted">
-            Selecione um arquivo KML ou KMZ com pontos de datacenter.
+          <section id="import-section">
+            <h3>Importação KML/KMZ</h3>
+            <p class="muted">
+              Selecione um arquivo KML ou KMZ com pontos de datacenter.
+            </p>
+
+            <form id="import-form">
+              <label for="kml-file">Arquivo</label>
+              <input id="kml-file" name="file" type="file" accept=".kml,.kmz" required />
+
+              <label for="mode">Modo de importação</label>
+              <select id="mode" name="mode">
+                <option value="skip_existing">Ignorar pontos já existentes</option>
+                <option value="overwrite">Apagar dados anteriores e importar tudo</option>
+              </select>
+
+              <button type="submit">Importar</button>
+            </form>
+
+            <p id="import-message" class="message"></p>
+          </section>
+
+          <p id="add-datacenter-permission-message" class="message hidden">
+            Seu usuário não tem permissão para importar ou cadastrar datacenter.
           </p>
 
-          <form id="import-form">
-            <label for="kml-file">Arquivo</label>
-            <input id="kml-file" name="file" type="file" accept=".kml,.kmz" required />
+        </section>
 
-            <label for="mode">Modo de importação</label>
-            <select id="mode" name="mode">
-              <option value="skip_existing">Ignorar pontos já existentes</option>
-              <option value="overwrite">Apagar dados anteriores e importar tudo</option>
-            </select>
+        <section id="admin-tab" class="tab-content card">
+          <section id="admin-section" class="admin-section">
+            <h3>Administração de usuários e grupos</h3>
+            <p class="muted">Crie grupos com permissões e depois associe usuários a esses grupos.</p>
 
-            <button type="submit">Importar</button>
-          </form>
+            <div class="admin-grid">
+              <article class="admin-card">
+                <h4>Criar grupo</h4>
+                <form id="group-form">
+                  <label for="group-name">Nome do grupo</label>
+                  <input id="group-name" name="name" type="text" maxlength="120" required />
 
-          <p id="import-message" class="message"></p>
+                  <div class="permission-grid">
+                    <label class="checkbox-row">
+                      <input type="checkbox" name="canImport" />
+                      <span>Importar dados</span>
+                    </label>
+                    <label class="checkbox-row">
+                      <input type="checkbox" name="canCreate" />
+                      <span>Inserir novo datacenter</span>
+                    </label>
+                    <label class="checkbox-row">
+                      <input type="checkbox" name="canEdit" />
+                      <span>Editar datacenter</span>
+                    </label>
+                    <label class="checkbox-row">
+                      <input type="checkbox" name="canDelete" />
+                      <span>Excluir datacenter</span>
+                    </label>
+                  </div>
+
+                  <div class="group-form-actions">
+                    <button id="group-cancel-edit-btn" type="button" class="secondary hidden">Cancelar edição</button>
+                    <button type="submit">Criar grupo</button>
+                  </div>
+                </form>
+                <p id="group-message" class="message"></p>
+                <ul id="group-list" class="group-list"></ul>
+              </article>
+
+              <article class="admin-card">
+                <h4>Criar usuário</h4>
+                <form id="user-form">
+                  <label for="new-user-email">E-mail</label>
+                  <input id="new-user-email" name="email" type="email" maxlength="200" required />
+
+                  <label for="new-user-password">Senha</label>
+                  <input id="new-user-password" name="password" type="password" minlength="8" maxlength="200" required />
+
+                  <label for="new-user-group">Grupo do usuário</label>
+                  <select id="new-user-group" name="groupId" required>
+                    <option value="">Selecione um grupo</option>
+                  </select>
+
+                  <button type="submit">Criar usuário</button>
+                </form>
+                <p id="user-message" class="message"></p>
+              </article>
+            </div>
+          </section>
         </section>
 
         <section id="search-tab" class="tab-content active card">
@@ -146,6 +218,39 @@
         </section>
       </section>
     </main>
+
+    <div id="edit-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
+      <div class="modal-card card">
+        <h3 id="edit-modal-title">Editar datacenter</h3>
+        <form id="edit-form" class="manual-form">
+          <div>
+            <label for="edit-name">Nome</label>
+            <input id="edit-name" name="name" type="text" maxlength="200" required />
+          </div>
+          <div>
+            <label for="edit-city">Cidade</label>
+            <input id="edit-city" name="city" type="text" maxlength="200" />
+          </div>
+          <div>
+            <label for="edit-district">Bairro</label>
+            <input id="edit-district" name="district" type="text" maxlength="200" />
+          </div>
+          <div>
+            <label for="edit-latitude">Latitude</label>
+            <input id="edit-latitude" name="latitude" type="number" step="any" min="-90" max="90" required />
+          </div>
+          <div>
+            <label for="edit-longitude">Longitude</label>
+            <input id="edit-longitude" name="longitude" type="number" step="any" min="-180" max="180" required />
+          </div>
+          <div class="modal-actions">
+            <button id="edit-cancel-btn" type="button" class="secondary">Cancelar</button>
+            <button type="submit">Salvar alterações</button>
+          </div>
+        </form>
+        <p id="edit-message" class="message"></p>
+      </div>
+    </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <script src="/app.js"></script>

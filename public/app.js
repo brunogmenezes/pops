@@ -14,8 +14,12 @@ const userLabel = document.getElementById('user-label');
 const logoutBtn = document.getElementById('logout-btn');
 const importForm = document.getElementById('import-form');
 const importMessage = document.getElementById('import-message');
+const importSection = document.getElementById('import-section');
+const importSectionDivider = document.getElementById('import-section-divider');
 const manualForm = document.getElementById('manual-form');
 const manualMessage = document.getElementById('manual-message');
+const manualSection = document.getElementById('manual-section');
+const addDatacenterPermissionMessage = document.getElementById('add-datacenter-permission-message');
 const searchForm = document.getElementById('search-form');
 const resultsEl = document.getElementById('results');
 const statTotalEl = document.getElementById('stat-total');
@@ -23,8 +27,34 @@ const statWithCityEl = document.getElementById('stat-with-city');
 const statWithDistrictEl = document.getElementById('stat-with-district');
 const statFilteredEl = document.getElementById('stat-filtered');
 const themeSelect = document.getElementById('theme-select');
+const editModal = document.getElementById('edit-modal');
+const editForm = document.getElementById('edit-form');
+const editMessage = document.getElementById('edit-message');
+const editCancelBtn = document.getElementById('edit-cancel-btn');
+const editNameInput = document.getElementById('edit-name');
+const editCityInput = document.getElementById('edit-city');
+const editDistrictInput = document.getElementById('edit-district');
+const editLatitudeInput = document.getElementById('edit-latitude');
+const editLongitudeInput = document.getElementById('edit-longitude');
+const adminTabButton = document.getElementById('admin-tab-btn');
+const adminTab = document.getElementById('admin-tab');
+const adminSection = document.getElementById('admin-section');
+const groupForm = document.getElementById('group-form');
+const groupNameInput = document.getElementById('group-name');
+const groupCancelEditBtn = document.getElementById('group-cancel-edit-btn');
+const groupMessage = document.getElementById('group-message');
+const groupList = document.getElementById('group-list');
+const userForm = document.getElementById('user-form');
+const userMessage = document.getElementById('user-message');
+const userGroupSelect = document.getElementById('new-user-group');
+const addDatacenterTabButton = document.querySelector('.tab-btn[data-tab="import-tab"]');
 
 let currentUserEmail = '';
+let editingDatacenterId = null;
+let editingGroupId = null;
+let currentIsAdmin = false;
+let currentPermissions = getDefaultPermissions();
+let availableGroups = [];
 
 setupTabs();
 initMap();
@@ -43,10 +73,12 @@ async function bootstrap() {
     const csrfData = await csrfResp.json();
     csrfToken = csrfData.csrfToken || '';
     currentUserEmail = me.email || '';
+    setAccessContext(me);
     const initialTheme = getPreferredTheme(currentUserEmail, me.themePreference);
     applyTheme(initialTheme);
 
     showDashboard(me.email);
+    await loadAdminGroups();
     await loadStats();
     await runSearch();
   } catch {
@@ -78,12 +110,14 @@ loginForm.addEventListener('submit', async (event) => {
     }
 
     csrfToken = data.csrfToken || '';
-  currentUserEmail = payload.email || '';
-  const initialTheme = getPreferredTheme(currentUserEmail, data.themePreference);
-  applyTheme(initialTheme);
+    currentUserEmail = payload.email || '';
+    setAccessContext(data);
+    const initialTheme = getPreferredTheme(currentUserEmail, data.themePreference);
+    applyTheme(initialTheme);
     showDashboard(payload.email);
     loginMessage.textContent = '';
     loginForm.reset();
+    await loadAdminGroups();
     await loadStats();
     await runSearch();
   } catch {
@@ -100,6 +134,9 @@ logoutBtn.addEventListener('click', async () => {
   } finally {
     csrfToken = '';
     currentUserEmail = '';
+    currentIsAdmin = false;
+    currentPermissions = getDefaultPermissions();
+    availableGroups = [];
     showLogin();
   }
 });
@@ -146,6 +183,12 @@ themeSelect.addEventListener('change', async (event) => {
 
 importForm.addEventListener('submit', async (event) => {
   event.preventDefault();
+
+  if (!currentPermissions.canImport && !currentIsAdmin) {
+    importMessage.textContent = 'Seu usuário não tem permissão para importar dados.';
+    return;
+  }
+
   importMessage.textContent = 'Importando...';
 
   const formData = new FormData(importForm);
@@ -183,6 +226,12 @@ importForm.addEventListener('submit', async (event) => {
 
 manualForm.addEventListener('submit', async (event) => {
   event.preventDefault();
+
+  if (!currentPermissions.canCreate && !currentIsAdmin) {
+    manualMessage.textContent = 'Seu usuário não tem permissão para inserir datacenter.';
+    return;
+  }
+
   manualMessage.textContent = 'Salvando...';
 
   const formData = new FormData(manualForm);
@@ -217,6 +266,86 @@ manualForm.addEventListener('submit', async (event) => {
     await runSearch();
   } catch {
     manualMessage.textContent = 'Erro de rede ao cadastrar datacenter';
+  }
+});
+
+groupForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const isEditing = Number.isInteger(editingGroupId) && editingGroupId > 0;
+  groupMessage.textContent = isEditing ? 'Salvando alterações do grupo...' : 'Criando grupo...';
+
+  const formData = new FormData(groupForm);
+  const payload = {
+    name: String(formData.get('name') || '').trim(),
+    canImport: formData.get('canImport') !== null,
+    canCreate: formData.get('canCreate') !== null,
+    canEdit: formData.get('canEdit') !== null,
+    canDelete: formData.get('canDelete') !== null,
+  };
+
+  try {
+    const targetUrl = isEditing ? `/api/admin/groups/${editingGroupId}` : '/api/admin/groups';
+    const targetMethod = isEditing ? 'PUT' : 'POST';
+
+    const resp = await fetch(targetUrl, {
+      method: targetMethod,
+      headers: {
+        'Content-Type': 'application/json',
+        'x-csrf-token': csrfToken,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) {
+      groupMessage.textContent = data.error || 'Falha ao criar grupo';
+      return;
+    }
+
+    groupMessage.textContent = isEditing ? 'Grupo atualizado com sucesso.' : 'Grupo criado com sucesso.';
+    resetGroupFormMode();
+    await loadAdminGroups();
+  } catch {
+    groupMessage.textContent = isEditing ? 'Erro de rede ao editar grupo' : 'Erro de rede ao criar grupo';
+  }
+});
+
+groupCancelEditBtn?.addEventListener('click', () => {
+  resetGroupFormMode();
+  groupMessage.textContent = 'Edição de grupo cancelada.';
+});
+
+userForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  userMessage.textContent = 'Criando usuário...';
+
+  const formData = new FormData(userForm);
+  const payload = {
+    email: String(formData.get('email') || '').trim(),
+    password: String(formData.get('password') || ''),
+    groupId: Number(formData.get('groupId')),
+  };
+
+  try {
+    const resp = await fetch('/api/admin/users', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-csrf-token': csrfToken,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) {
+      userMessage.textContent = data.error || 'Falha ao criar usuário';
+      return;
+    }
+
+    userMessage.textContent = 'Usuário criado com sucesso.';
+    userForm.reset();
+  } catch {
+    userMessage.textContent = 'Erro de rede ao criar usuário';
   }
 });
 
@@ -274,11 +403,33 @@ function renderResults(items) {
   }
 
   resultsEl.innerHTML = '';
+  const canEdit = currentIsAdmin || currentPermissions.canEdit;
+  const canDelete = currentIsAdmin || currentPermissions.canDelete;
+  const canShowActions = canEdit || canDelete;
+
   for (const item of items) {
     const li = document.createElement('li');
     li.dataset.id = String(item.id);
     li.innerHTML = `
-      <strong>${escapeHtml(item.name)}</strong><br/>
+      <div class="result-top-row">
+        <strong>${escapeHtml(item.name)}</strong>
+        ${
+          canShowActions
+            ? `<div class="result-actions">
+                ${
+                  canEdit
+                    ? '<button type="button" class="icon-btn edit-btn" title="Editar" aria-label="Editar datacenter">✏️</button>'
+                    : ''
+                }
+                ${
+                  canDelete
+                    ? '<button type="button" class="icon-btn delete-btn" title="Excluir" aria-label="Excluir datacenter">🗑️</button>'
+                    : ''
+                }
+              </div>`
+            : ''
+        }
+      </div>
       <small>${escapeHtml(item.city || '-')}, ${escapeHtml(item.district || '-')}</small><br/>
       <small>Lat: ${Number(item.latitude).toFixed(6)} | Lng: ${Number(item.longitude).toFixed(6)}</small>
     `;
@@ -293,7 +444,131 @@ function renderResults(items) {
       focusMap(item.id, item.latitude, item.longitude, item.name);
     });
 
+    const editBtn = li.querySelector('.edit-btn');
+    const deleteBtn = li.querySelector('.delete-btn');
+
+    editBtn?.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      if (!canEdit) return;
+      openEditModal(item);
+    });
+
+    deleteBtn?.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      if (!canDelete) return;
+      await deleteDatacenter(item);
+    });
+
     resultsEl.appendChild(li);
+  }
+}
+
+function openEditModal(item) {
+  if (!currentIsAdmin && !currentPermissions.canEdit) {
+    return;
+  }
+
+  editingDatacenterId = item.id;
+  editNameInput.value = item.name || '';
+  editCityInput.value = item.city || '';
+  editDistrictInput.value = item.district || '';
+  editLatitudeInput.value = String(item.latitude ?? '');
+  editLongitudeInput.value = String(item.longitude ?? '');
+  editMessage.textContent = '';
+  editModal.classList.remove('hidden');
+}
+
+function closeEditModal() {
+  editModal.classList.add('hidden');
+  editMessage.textContent = '';
+  editingDatacenterId = null;
+}
+
+editCancelBtn.addEventListener('click', () => {
+  closeEditModal();
+});
+
+editModal.addEventListener('click', (event) => {
+  if (event.target === editModal) {
+    closeEditModal();
+  }
+});
+
+editForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+
+  if (!currentIsAdmin && !currentPermissions.canEdit) {
+    editMessage.textContent = 'Seu usuário não tem permissão para editar datacenter.';
+    return;
+  }
+
+  if (!editingDatacenterId) {
+    closeEditModal();
+    return;
+  }
+
+  editMessage.textContent = 'Salvando...';
+
+  try {
+    const resp = await fetch(`/api/datacenters/${editingDatacenterId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-csrf-token': csrfToken,
+      },
+      body: JSON.stringify({
+        name: editNameInput.value.trim(),
+        city: editCityInput.value.trim(),
+        district: editDistrictInput.value.trim(),
+        latitude: editLatitudeInput.value.trim(),
+        longitude: editLongitudeInput.value.trim(),
+      }),
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) {
+      editMessage.textContent = data.error || 'Falha ao editar datacenter';
+      return;
+    }
+
+    selectedDatacenterId = data.item?.id || editingDatacenterId;
+    closeEditModal();
+    await loadStats();
+    await runSearch();
+  } catch {
+    editMessage.textContent = 'Erro de rede ao editar datacenter';
+  }
+});
+
+async function deleteDatacenter(item) {
+  if (!currentIsAdmin && !currentPermissions.canDelete) {
+    alert('Seu usuário não tem permissão para excluir datacenter.');
+    return;
+  }
+
+  const ok = confirm(`Deseja excluir o datacenter "${item.name}"?`);
+  if (!ok) return;
+
+  try {
+    const resp = await fetch(`/api/datacenters/${item.id}`, {
+      method: 'DELETE',
+      headers: { 'x-csrf-token': csrfToken },
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) {
+      alert(data.error || 'Falha ao excluir datacenter');
+      return;
+    }
+
+    if (selectedDatacenterId === item.id) {
+      selectedDatacenterId = null;
+    }
+
+    await loadStats();
+    await runSearch();
+  } catch {
+    alert('Erro de rede ao excluir datacenter');
   }
 }
 
@@ -396,6 +671,216 @@ async function loadStats() {
   } catch {
     // silencia erro de stats e mantém a tela funcional
   }
+}
+
+function setAccessContext(data) {
+  currentIsAdmin = Boolean(data?.isAdmin);
+  const incoming = data?.permissions || {};
+  currentPermissions = {
+    canImport: Boolean(incoming.canImport),
+    canCreate: Boolean(incoming.canCreate),
+    canEdit: Boolean(incoming.canEdit),
+    canDelete: Boolean(incoming.canDelete),
+  };
+  applyFeatureVisibility();
+}
+
+function applyFeatureVisibility() {
+  const canImport = currentIsAdmin || currentPermissions.canImport;
+  const canCreate = currentIsAdmin || currentPermissions.canCreate;
+  const canAddDatacenter = currentIsAdmin || canImport || canCreate;
+
+  if (manualSection) manualSection.classList.toggle('hidden', !canCreate);
+  if (importSection) importSection.classList.toggle('hidden', !canImport);
+
+  const showImportDivider = canCreate && canImport;
+  if (importSectionDivider) importSectionDivider.classList.toggle('hidden', !showImportDivider);
+
+  if (addDatacenterPermissionMessage) {
+    addDatacenterPermissionMessage.classList.toggle('hidden', canAddDatacenter);
+  }
+
+  if (addDatacenterTabButton) {
+    addDatacenterTabButton.classList.toggle('hidden', !canAddDatacenter && !currentIsAdmin);
+  }
+
+  if (adminSection) adminSection.classList.toggle('hidden', !currentIsAdmin);
+  if (adminTabButton) adminTabButton.classList.toggle('hidden', !currentIsAdmin);
+  if (adminTab) adminTab.classList.toggle('hidden', !currentIsAdmin);
+
+  const activeTabButton = document.querySelector('.tab-btn.active');
+  const activeTabId = activeTabButton?.getAttribute('data-tab');
+  if ((!canAddDatacenter && activeTabId === 'import-tab') || (!currentIsAdmin && activeTabId === 'admin-tab')) {
+    const searchBtn = document.querySelector('.tab-btn[data-tab="search-tab"]');
+    searchBtn?.click();
+  }
+}
+
+async function loadAdminGroups() {
+  if (!currentIsAdmin) {
+    availableGroups = [];
+    renderGroupOptions([]);
+    renderGroupList([]);
+    return;
+  }
+
+  try {
+    const resp = await fetch('/api/admin/groups');
+    const data = await resp.json();
+    if (!resp.ok) {
+      groupMessage.textContent = data.error || 'Falha ao carregar grupos';
+      return;
+    }
+
+    availableGroups = Array.isArray(data.items) ? data.items : [];
+    renderGroupOptions(availableGroups);
+    renderGroupList(availableGroups);
+  } catch {
+    groupMessage.textContent = 'Erro de rede ao carregar grupos';
+  }
+}
+
+function renderGroupOptions(groups) {
+  if (!userGroupSelect) return;
+
+  userGroupSelect.innerHTML = '<option value="">Selecione um grupo</option>';
+  for (const group of groups) {
+    const option = document.createElement('option');
+    option.value = String(group.id);
+    option.textContent = String(group.name || `Grupo ${group.id}`);
+    userGroupSelect.appendChild(option);
+  }
+}
+
+function renderGroupList(groups) {
+  if (!groupList) return;
+
+  if (!groups.length) {
+    groupList.innerHTML = '<li>Nenhum grupo cadastrado.</li>';
+    return;
+  }
+
+  groupList.innerHTML = '';
+  for (const group of groups) {
+    const li = document.createElement('li');
+    const parts = [];
+    if (group.can_import) parts.push('Importar');
+    if (group.can_create) parts.push('Inserir');
+    if (group.can_edit) parts.push('Editar');
+    if (group.can_delete) parts.push('Excluir');
+
+    const usersCount = Number(group.users_count || 0);
+    const permissionsLabel = parts.length ? parts.join(', ') : 'sem permissões';
+
+    li.innerHTML = `
+      <div class="group-row">
+        <div>
+          <strong>${escapeHtml(group.name)}</strong>
+          <small>${escapeHtml(permissionsLabel)} | usuários: ${usersCount}</small>
+        </div>
+        <div class="group-actions">
+          <button type="button" class="icon-btn" data-action="edit" title="Editar grupo" aria-label="Editar grupo">✏️</button>
+          <button
+            type="button"
+            class="icon-btn"
+            data-action="delete"
+            title="Excluir grupo"
+            aria-label="Excluir grupo"
+            ${usersCount > 0 ? 'disabled' : ''}
+          >🗑️</button>
+        </div>
+      </div>
+    `;
+
+    const editBtn = li.querySelector('button[data-action="edit"]');
+    const deleteBtn = li.querySelector('button[data-action="delete"]');
+
+    editBtn?.addEventListener('click', async () => {
+      startGroupEdit(group);
+    });
+
+    deleteBtn?.addEventListener('click', async () => {
+      await deleteGroup(group);
+    });
+
+    groupList.appendChild(li);
+  }
+}
+
+function startGroupEdit(group) {
+  if (!groupForm) return;
+
+  editingGroupId = Number(group.id);
+  groupNameInput.value = String(group.name || '');
+
+  const canImportEl = groupForm.querySelector('input[name="canImport"]');
+  const canCreateEl = groupForm.querySelector('input[name="canCreate"]');
+  const canEditEl = groupForm.querySelector('input[name="canEdit"]');
+  const canDeleteEl = groupForm.querySelector('input[name="canDelete"]');
+
+  if (canImportEl) canImportEl.checked = Boolean(group.can_import);
+  if (canCreateEl) canCreateEl.checked = Boolean(group.can_create);
+  if (canEditEl) canEditEl.checked = Boolean(group.can_edit);
+  if (canDeleteEl) canDeleteEl.checked = Boolean(group.can_delete);
+
+  const submitBtn = groupForm.querySelector('button[type="submit"]');
+  if (submitBtn) submitBtn.textContent = 'Salvar alterações';
+  if (groupCancelEditBtn) groupCancelEditBtn.classList.remove('hidden');
+
+  groupMessage.textContent = `Editando grupo: ${group.name}`;
+  groupNameInput.focus();
+}
+
+function resetGroupFormMode() {
+  editingGroupId = null;
+  groupForm?.reset();
+
+  const submitBtn = groupForm?.querySelector('button[type="submit"]');
+  if (submitBtn) submitBtn.textContent = 'Criar grupo';
+
+  if (groupCancelEditBtn) groupCancelEditBtn.classList.add('hidden');
+}
+
+async function deleteGroup(group) {
+  const usersCount = Number(group.users_count || 0);
+  if (usersCount > 0) {
+    groupMessage.textContent = 'Não é possível excluir: há usuários associados a este grupo.';
+    return;
+  }
+
+  const ok = confirm(`Deseja excluir o grupo "${group.name}"?`);
+  if (!ok) return;
+
+  groupMessage.textContent = 'Excluindo grupo...';
+
+  try {
+    const resp = await fetch(`/api/admin/groups/${group.id}`, {
+      method: 'DELETE',
+      headers: {
+        'x-csrf-token': csrfToken,
+      },
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) {
+      groupMessage.textContent = data.error || 'Falha ao excluir grupo';
+      return;
+    }
+
+    groupMessage.textContent = 'Grupo excluído com sucesso.';
+    await loadAdminGroups();
+  } catch {
+    groupMessage.textContent = 'Erro de rede ao excluir grupo';
+  }
+}
+
+function getDefaultPermissions() {
+  return {
+    canImport: false,
+    canCreate: false,
+    canEdit: false,
+    canDelete: false,
+  };
 }
 
 function updateFilteredStat(count) {
