@@ -79,6 +79,7 @@ async function bootstrap() {
 
     showDashboard(me.email);
     await loadAdminGroups();
+    await loadAdminUsers();
     await loadStats();
     await runSearch();
   } catch {
@@ -92,7 +93,7 @@ loginForm.addEventListener('submit', async (event) => {
 
   const formData = new FormData(loginForm);
   const payload = {
-    email: String(formData.get('email') || ''),
+    username: String(formData.get('username') || ''),
     password: String(formData.get('password') || ''),
   };
 
@@ -110,14 +111,15 @@ loginForm.addEventListener('submit', async (event) => {
     }
 
     csrfToken = data.csrfToken || '';
-    currentUserEmail = payload.email || '';
+    currentUserEmail = data.email || '';
     setAccessContext(data);
     const initialTheme = getPreferredTheme(currentUserEmail, data.themePreference);
     applyTheme(initialTheme);
-    showDashboard(payload.email);
+    showDashboard(data.email);
     loginMessage.textContent = '';
     loginForm.reset();
     await loadAdminGroups();
+    await loadAdminUsers();
     await loadStats();
     await runSearch();
   } catch {
@@ -305,6 +307,7 @@ groupForm?.addEventListener('submit', async (event) => {
     groupMessage.textContent = isEditing ? 'Grupo atualizado com sucesso.' : 'Grupo criado com sucesso.';
     resetGroupFormMode();
     await loadAdminGroups();
+    await loadAdminUsers();
   } catch {
     groupMessage.textContent = isEditing ? 'Erro de rede ao editar grupo' : 'Erro de rede ao criar grupo';
   }
@@ -321,10 +324,16 @@ userForm?.addEventListener('submit', async (event) => {
 
   const formData = new FormData(userForm);
   const payload = {
-    email: String(formData.get('email') || '').trim(),
+    username: String(formData.get('username') || '').trim().toLowerCase(),
+    email: String(formData.get('email') || '').trim().toLowerCase(),
     password: String(formData.get('password') || ''),
     groupId: Number(formData.get('groupId')),
   };
+
+  if (!payload.username) {
+    userMessage.textContent = 'Usuário é obrigatório';
+    return;
+  }
 
   try {
     const resp = await fetch('/api/admin/users', {
@@ -344,6 +353,7 @@ userForm?.addEventListener('submit', async (event) => {
 
     userMessage.textContent = 'Usuário criado com sucesso.';
     userForm.reset();
+    await loadAdminUsers();
   } catch {
     userMessage.textContent = 'Erro de rede ao criar usuário';
   }
@@ -869,8 +879,147 @@ async function deleteGroup(group) {
 
     groupMessage.textContent = 'Grupo excluído com sucesso.';
     await loadAdminGroups();
+    await loadAdminUsers();
   } catch {
     groupMessage.textContent = 'Erro de rede ao excluir grupo';
+  }
+}
+
+async function loadAdminUsers() {
+  if (!currentIsAdmin) {
+    renderUserList([]);
+    return;
+  }
+
+  try {
+    const resp = await fetch('/api/admin/users');
+    const data = await resp.json();
+    if (!resp.ok) {
+      const userListMessage = document.getElementById('user-list-message');
+      if (userListMessage) userListMessage.textContent = data.error || 'Falha ao carregar usuários';
+      return;
+    }
+
+    const users = Array.isArray(data.items) ? data.items : [];
+    renderUserList(users);
+  } catch {
+    const userListMessage = document.getElementById('user-list-message');
+    if (userListMessage) userListMessage.textContent = 'Erro de rede ao carregar usuários';
+  }
+}
+
+function renderUserList(users) {
+  const userList = document.getElementById('user-list');
+  const userListMessage = document.getElementById('user-list-message');
+  if (!userList) return;
+
+  if (!users.length) {
+    userList.innerHTML = '<li>Nenhum usuário cadastrado.</li>';
+    if (userListMessage) userListMessage.textContent = '';
+    return;
+  }
+
+  userList.innerHTML = '';
+  for (const user of users) {
+    const li = document.createElement('li');
+    const groupName = String(user.group_name || 'Sem grupo');
+    const email = user.email ? `${escapeHtml(user.email)}` : '';
+    
+    li.innerHTML = `
+      <div class="group-row">
+        <div>
+          <strong>${escapeHtml(user.username)}</strong>
+          <small>Grupo: ${escapeHtml(groupName)}${user.is_admin ? ' | Admin' : ''}${email ? ' | ' + email : ''}</small>
+        </div>
+        <div class="group-actions">
+          <button type="button" class="icon-btn" data-action="edit" data-user-id="${user.id}" title="Editar usuário" aria-label="Editar usuário">✏️</button>
+          <button type="button" class="icon-btn" data-action="delete" data-user-id="${user.id}" title="Excluir usuário" aria-label="Excluir usuário">🗑️</button>
+        </div>
+      </div>
+    `;
+
+    const editBtn = li.querySelector('button[data-action="edit"]');
+    const deleteBtn = li.querySelector('button[data-action="delete"]');
+
+    editBtn?.addEventListener('click', async () => {
+      await editUser(user);
+    });
+
+    deleteBtn?.addEventListener('click', async () => {
+      await deleteUser(user);
+    });
+
+    userList.appendChild(li);
+  }
+  
+  if (userListMessage) userListMessage.textContent = '';
+}
+
+async function editUser(user) {
+  const newPassword = prompt(`Digite a nova senha para ${user.username}\n(deixe em branco para manter a senha atual):`);
+  if (newPassword === null) return;
+
+  if (newPassword && newPassword.length < 8) {
+    alert('A senha deve ter pelo menos 8 caracteres.');
+    return;
+  }
+
+  const userListMessage = document.getElementById('user-list-message');
+  if (userListMessage) userListMessage.textContent = 'Atualizando usuário...';
+
+  try {
+    const payload = {};
+    if (newPassword) {
+      payload.password = newPassword;
+    }
+
+    const resp = await fetch(`/api/admin/users/${user.id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-csrf-token': csrfToken,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) {
+      if (userListMessage) userListMessage.textContent = data.error || 'Falha ao atualizar usuário';
+      return;
+    }
+
+    if (userListMessage) userListMessage.textContent = 'Usuário atualizado com sucesso.';
+    await loadAdminUsers();
+  } catch {
+    if (userListMessage) userListMessage.textContent = 'Erro de rede ao atualizar usuário';
+  }
+}
+
+async function deleteUser(user) {
+  const ok = confirm(`Deseja excluir o usuário "${user.username}"?`);
+  if (!ok) return;
+
+  const userListMessage = document.getElementById('user-list-message');
+  if (userListMessage) userListMessage.textContent = 'Excluindo usuário...';
+
+  try {
+    const resp = await fetch(`/api/admin/users/${user.id}`, {
+      method: 'DELETE',
+      headers: {
+        'x-csrf-token': csrfToken,
+      },
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) {
+      if (userListMessage) userListMessage.textContent = data.error || 'Falha ao excluir usuário';
+      return;
+    }
+
+    if (userListMessage) userListMessage.textContent = 'Usuário excluído com sucesso.';
+    await loadAdminUsers();
+  } catch {
+    if (userListMessage) userListMessage.textContent = 'Erro de rede ao excluir usuário';
   }
 }
 

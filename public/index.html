@@ -14,8 +14,8 @@
         <p class="muted">Controle de localização de datacenters</p>
 
         <form id="login-form" autocomplete="on">
-          <label for="email">E-mail</label>
-          <input id="email" name="email" type="email" required maxlength="200" />
+          <label for="username">Usuário</label>
+          <input id="username" name="username" type="text" required maxlength="200" />
 
           <label for="password">Senha</label>
           <input id="password" name="password" type="password" required maxlength="200" />
@@ -153,8 +153,11 @@
               <article class="admin-card">
                 <h4>Criar usuário</h4>
                 <form id="user-form">
-                  <label for="new-user-email">E-mail</label>
-                  <input id="new-user-email" name="email" type="email" maxlength="200" required />
+                  <label for="new-user-username">Usuário</label>
+                  <input id="new-user-username" name="username" type="text" maxlength="200" required />
+
+                  <label for="new-user-email">E-mail (opcional)</label>
+                  <input id="new-user-email" name="email" type="email" maxlength="200" />
 
                   <label for="new-user-password">Senha</label>
                   <input id="new-user-password" name="password" type="password" minlength="8" maxlength="200" required />
@@ -167,6 +170,12 @@
                   <button type="submit">Criar usuário</button>
                 </form>
                 <p id="user-message" class="message"></p>
+              </article>
+
+              <article class="admin-card">
+                <h4>Usuários cadastrados</h4>
+                <p id="user-list-message" class="message"></p>
+                <ul id="user-list" class="group-list"></ul>
               </article>
             </div>
           </section>

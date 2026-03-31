@@ -155,6 +155,7 @@ app.get('/api/me', requireAuth, async (req, res) => {
     return res.json({
       id: req.session.userId,
       email: req.session.userEmail,
+      username: req.session.username,
       themePreference: req.session.userTheme || 'dark',
       isAdmin: Boolean(req.session.isAdmin),
       groupId: req.session.groupId || null,
@@ -173,14 +174,17 @@ app.get('/api/csrf', requireAuth, (req, res) => {
 
 app.post('/api/login', loginLimiter, async (req, res) => {
   try {
-    const email = String(req.body.email || '').trim().toLowerCase();
+    const username = String(req.body.username || '').trim().toLowerCase();
     const password = String(req.body.password || '');
 
-    if (!email || !password || email.length > 200 || password.length > 200) {
+    if (!username || !password || username.length > 200 || password.length > 200) {
       return res.status(400).json({ error: 'Credenciais inválidas' });
     }
 
-    const result = await query('SELECT id, email, password_hash FROM users WHERE email = $1', [email]);
+    const result = await query(
+      'SELECT id, username, email, password_hash FROM users WHERE username = $1 OR (email IS NOT NULL AND email = $1)',
+      [username]
+    );
     if (result.rowCount === 0) {
       return res.status(401).json({ error: 'Usuário ou senha inválidos' });
     }
@@ -192,9 +196,10 @@ app.post('/api/login', loginLimiter, async (req, res) => {
     }
 
     req.session.userId = user.id;
-    req.session.userEmail = user.email;
+    req.session.userEmail = user.email || user.username;
+    req.session.username = user.username;
     req.session.userTheme = await getUserThemePreference(user.id);
-    const access = await getUserAccessContext(user.id, user.email);
+    const access = await getUserAccessContext(user.id, req.session.userEmail);
     req.session.isAdmin = access.isAdmin;
     req.session.permissions = access.permissions;
     req.session.groupId = access.groupId;
@@ -204,6 +209,8 @@ app.post('/api/login', loginLimiter, async (req, res) => {
     return res.json({
       ok: true,
       csrfToken,
+      email: user.email || user.username,
+      username: user.username,
       themePreference: req.session.userTheme,
       isAdmin: access.isAdmin,
       groupId: access.groupId,
@@ -412,11 +419,16 @@ app.delete('/api/admin/groups/:id', requireAuth, requireCsrf, requireAdmin, asyn
 
 app.post('/api/admin/users', requireAuth, requireCsrf, requireAdmin, async (req, res) => {
   try {
+    const username = String(req.body.username || '').trim().toLowerCase();
     const email = String(req.body.email || '').trim().toLowerCase();
     const password = String(req.body.password || '').trim();
     const groupId = Number(req.body.groupId);
 
-    if (!email || email.length > 200 || !email.includes('@')) {
+    if (!username || username.length > 200) {
+      return res.status(400).json({ error: 'Usuário inválido' });
+    }
+
+    if (email && (!email.includes('@') || email.length > 200)) {
       return res.status(400).json({ error: 'E-mail inválido' });
     }
 
@@ -436,11 +448,11 @@ app.post('/api/admin/users', requireAuth, requireCsrf, requireAdmin, async (req,
     const passwordHash = await bcrypt.hash(password, 12);
     const result = await query(
       `
-        INSERT INTO users (email, password_hash, group_id, is_admin)
-        VALUES ($1, $2, $3, false)
-        RETURNING id, email, group_id, created_at
+        INSERT INTO users (username, email, password_hash, group_id, is_admin)
+        VALUES ($1, $2, $3, $4, false)
+        RETURNING id, username, email, group_id, created_at
       `,
-      [email, passwordHash, groupId]
+      [username, email || null, passwordHash, groupId]
     );
 
     return res.status(201).json({ ok: true, item: result.rows[0] });
@@ -448,14 +460,128 @@ app.post('/api/admin/users', requireAuth, requireCsrf, requireAdmin, async (req,
     if (error?.code === '42703') {
       return res.status(500).json({
         error:
-          'Schema desatualizado: coluna users.group_id não existe. Execute a atualização do banco para habilitar associação de grupo no usuário.',
+          'Schema desatualizado: coluna users.username não existe. Reinicie o serviço para atualizar o banco de dados.',
       });
     }
     if (error?.code === '23505') {
+      const detail = error.detail || '';
+      if (detail.includes('username')) {
+        return res.status(409).json({ error: 'Usuário já cadastrado' });
+      }
       return res.status(409).json({ error: 'E-mail já cadastrado' });
     }
     console.error(error);
     return res.status(500).json({ error: 'Erro ao criar usuário' });
+  }
+});
+
+app.get('/api/admin/users', requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const result = await query(`
+      SELECT
+        u.id,
+        u.username,
+        u.email,
+        u.group_id,
+        u.is_admin,
+        u.created_at,
+        g.name AS group_name
+      FROM users u
+      LEFT JOIN user_groups g ON u.group_id = g.id
+      ORDER BY u.username ASC
+    `);
+    return res.json({ items: result.rows });
+  } catch (error) {
+    if (error?.code === '42703') {
+      return res.json({ items: [] });
+    }
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar usuários' });
+  }
+});
+
+app.put('/api/admin/users/:id', requireAuth, requireCsrf, requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'ID de usuário inválido' });
+    }
+
+    const groupId = Number(req.body.groupId);
+    const password = String(req.body.password || '').trim();
+
+    if (groupId && (!Number.isInteger(groupId) || groupId <= 0)) {
+      return res.status(400).json({ error: 'Grupo inválido' });
+    }
+
+    if (groupId) {
+      const groupExists = await query('SELECT id FROM user_groups WHERE id = $1', [groupId]);
+      if (groupExists.rowCount === 0) {
+        return res.status(400).json({ error: 'Grupo não encontrado' });
+      }
+    }
+
+    if (password) {
+      if (password.length < 8 || password.length > 200) {
+        return res.status(400).json({ error: 'Senha deve ter entre 8 e 200 caracteres' });
+      }
+      
+      const passwordHash = await bcrypt.hash(password, 12);
+      const result = await query(
+        `
+          UPDATE users
+          SET group_id = COALESCE($1, group_id),
+              password_hash = $2
+          WHERE id = $3
+          RETURNING id, email, group_id, is_admin, created_at
+        `,
+        [groupId || null, passwordHash, id]
+      );
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({ error: 'Usuário não encontrado' });
+      }
+
+      return res.json({ ok: true, item: result.rows[0] });
+    } else {
+      const result = await query(
+        `
+          UPDATE users
+          SET group_id = COALESCE($1, group_id)
+          WHERE id = $2
+          RETURNING id, email, group_id, is_admin, created_at
+        `,
+        [groupId || null, id]
+      );
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({ error: 'Usuário não encontrado' });
+      }
+
+      return res.json({ ok: true, item: result.rows[0] });
+    }
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao editar usuário' });
+  }
+});
+
+app.delete('/api/admin/users/:id', requireAuth, requireCsrf, requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'ID de usuário inválido' });
+    }
+
+    const result = await query('DELETE FROM users WHERE id = $1', [id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao excluir usuário' });
   }
 });
 

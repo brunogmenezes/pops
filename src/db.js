@@ -42,7 +42,8 @@ async function initDatabase() {
     await query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
-        email TEXT UNIQUE NOT NULL,
+        email TEXT UNIQUE,
+        username TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
       );
@@ -124,7 +125,9 @@ async function ensureAdminUser() {
     return;
   }
 
-  const existing = await query('SELECT id FROM users WHERE email = $1', [adminEmail]);
+  const adminUsername = adminEmail.split('@')[0];
+
+  const existing = await query('SELECT id FROM users WHERE username = $1 OR email = $1', [adminEmail]);
   if (existing.rowCount > 0) {
     try {
       await query('UPDATE users SET is_admin = true WHERE id = $1', [existing.rows[0].id]);
@@ -138,7 +141,8 @@ async function ensureAdminUser() {
 
   const passwordHash = await bcrypt.hash(adminPassword, 12);
   try {
-    await query('INSERT INTO users (email, password_hash, is_admin) VALUES ($1, $2, true)', [
+    await query('INSERT INTO users (username, email, password_hash, is_admin) VALUES ($1, $2, $3, true)', [
+      adminUsername,
       adminEmail,
       passwordHash,
     ]);
