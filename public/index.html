@@ -197,9 +197,9 @@
               <p class="muted">Com cidade</p>
               <strong id="stat-with-city">0</strong>
             </article>
-            <article class="stat-card">
-              <p class="muted">Com CNL</p>
-              <strong id="stat-with-cnl">0</strong>
+            <article id="stat-without-cnl-card" class="stat-card stat-card-filter" role="button" tabindex="0" aria-label="Filtrar datacenters sem CNL">
+              <p class="muted">Sem CNL</p>
+              <strong id="stat-without-cnl">0</strong>
             </article>
             <article class="stat-card">
               <p class="muted">Resultado atual</p>
@@ -219,6 +219,7 @@
             <div>
               <label for="cnl">CNL</label>
               <input id="cnl" name="cnl" type="text" />
+              <input id="has-cnl-filter" name="hasCnl" type="hidden" value="" />
             </div>
             <div class="filters-actions">
               <button type="submit">Pesquisar</button>

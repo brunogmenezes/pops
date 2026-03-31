@@ -568,6 +568,22 @@ button.secondary {
   padding: 10px 12px;
 }
 
+.stat-card-filter {
+  cursor: pointer;
+  user-select: none;
+  transition: transform 120ms ease, border-color 120ms ease;
+}
+
+.stat-card-filter:hover {
+  transform: translateY(-1px);
+  border-color: var(--primary);
+}
+
+.stat-card-filter.active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px rgba(79, 140, 255, 0.35) inset;
+}
+
 .stat-card .muted {
   margin: 0;
   font-size: 12px;

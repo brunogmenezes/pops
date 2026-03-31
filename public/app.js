@@ -38,7 +38,8 @@ const subtleToast = document.getElementById('subtle-toast');
 const resultsEl = document.getElementById('results');
 const statTotalEl = document.getElementById('stat-total');
 const statWithCityEl = document.getElementById('stat-with-city');
-const statWithCnlEl = document.getElementById('stat-with-cnl');
+const statWithoutCnlEl = document.getElementById('stat-without-cnl');
+const statWithoutCnlCard = document.getElementById('stat-without-cnl-card');
 const statFilteredEl = document.getElementById('stat-filtered');
 const themeSelect = document.getElementById('theme-select');
 const editModal = document.getElementById('edit-modal');
@@ -461,6 +462,25 @@ searchForm.addEventListener('submit', async (event) => {
   await runSearch();
 });
 
+statWithoutCnlCard?.addEventListener('click', async () => {
+  const hasCnlInput = document.getElementById('has-cnl-filter');
+  const cnlInput = document.getElementById('cnl');
+  if (!hasCnlInput) return;
+
+  const isActive = hasCnlInput.value === 'false';
+  hasCnlInput.value = isActive ? '' : 'false';
+  if (!isActive && cnlInput) cnlInput.value = '';
+
+  updateWithoutCnlCardState();
+  await runSearch();
+});
+
+statWithoutCnlCard?.addEventListener('keydown', async (event) => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  event.preventDefault();
+  statWithoutCnlCard.click();
+});
+
 exportKmlBtn?.addEventListener('click', async () => {
   const previousLabel = exportKmlBtn.textContent;
   exportKmlBtn.disabled = true;
@@ -472,7 +492,8 @@ exportKmlBtn?.addEventListener('click', async () => {
     const q = encodeURIComponent(String(formData.get('q') || '').trim());
     const city = encodeURIComponent(String(formData.get('city') || '').trim());
     const cnl = encodeURIComponent(String(formData.get('cnl') || '').trim());
-    const url = `/api/datacenters/export.kml?q=${q}&city=${city}&cnl=${cnl}`;
+    const hasCnl = encodeURIComponent(String(formData.get('hasCnl') || '').trim());
+    const url = `/api/datacenters/export.kml?q=${q}&city=${city}&cnl=${cnl}&hasCnl=${hasCnl}`;
 
     const resp = await fetch(url);
     if (!resp.ok) {
@@ -528,8 +549,10 @@ async function runSearch() {
   const q = encodeURIComponent(String(formData.get('q') || '').trim());
   const city = encodeURIComponent(String(formData.get('city') || '').trim());
   const cnl = encodeURIComponent(String(formData.get('cnl') || '').trim());
+  const hasCnl = encodeURIComponent(String(formData.get('hasCnl') || '').trim());
+  updateWithoutCnlCardState();
 
-  const url = `/api/datacenters?q=${q}&city=${city}&cnl=${cnl}`;
+  const url = `/api/datacenters?q=${q}&city=${city}&cnl=${cnl}&hasCnl=${hasCnl}`;
 
   const resp = await fetch(url);
   const data = await resp.json();
@@ -987,10 +1010,16 @@ async function loadStats() {
     const stats = await resp.json();
     statTotalEl.textContent = String(stats.total || 0);
     statWithCityEl.textContent = String(stats.with_city || 0);
-    statWithCnlEl.textContent = String(stats.with_cnl || stats.with_district || 0);
+    statWithoutCnlEl.textContent = String(stats.without_cnl || 0);
   } catch {
     // silencia erro de stats e mantém a tela funcional
   }
+}
+
+function updateWithoutCnlCardState() {
+  const hasCnlInput = document.getElementById('has-cnl-filter');
+  const isActive = hasCnlInput?.value === 'false';
+  if (statWithoutCnlCard) statWithoutCnlCard.classList.toggle('active', Boolean(isActive));
 }
 
 function setAccessContext(data) {

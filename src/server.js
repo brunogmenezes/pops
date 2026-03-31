@@ -668,8 +668,9 @@ app.get('/api/datacenters/stats', requireAuth, async (_req, res) => {
       SELECT
         COUNT(*)::int AS total,
         COUNT(city)::int AS with_city,
-        COUNT(district)::int AS with_district,
-        COUNT(district)::int AS with_cnl,
+        COUNT(*) FILTER (WHERE district IS NOT NULL AND BTRIM(district) <> '')::int AS with_district,
+        COUNT(*) FILTER (WHERE district IS NOT NULL AND BTRIM(district) <> '')::int AS with_cnl,
+        COUNT(*) FILTER (WHERE district IS NULL OR BTRIM(district) = '')::int AS without_cnl,
         COUNT(DISTINCT city)::int AS cities
       FROM datacenters
     `);
@@ -1240,6 +1241,7 @@ function buildDatacentersFilterClause(rawQuery) {
   const city = String(rawQuery?.city || '').trim();
   const district = String(rawQuery?.cnl || rawQuery?.district || '').trim();
   const q = String(rawQuery?.q || '').trim();
+  const hasCnlRaw = String(rawQuery?.hasCnl || '').trim().toLowerCase();
 
   const filters = [];
   const params = [];
@@ -1257,6 +1259,12 @@ function buildDatacentersFilterClause(rawQuery) {
   if (q) {
     params.push(`%${q}%`);
     filters.push(`(name ILIKE $${params.length} OR city ILIKE $${params.length} OR district ILIKE $${params.length})`);
+  }
+
+  if (['false', '0', 'no', 'nao', 'não'].includes(hasCnlRaw)) {
+    filters.push(`(district IS NULL OR BTRIM(district) = '')`);
+  } else if (['true', '1', 'yes', 'sim'].includes(hasCnlRaw)) {
+    filters.push(`(district IS NOT NULL AND BTRIM(district) <> '')`);
   }
 
   return {
