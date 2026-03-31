@@ -93,6 +93,8 @@ const MANUAL_PICKER_DEFAULT = {
   longitude: -47.485614,
   zoom: 11,
 };
+const MAP_MAX_ZOOM = 18;
+const ESRI_SAFE_NATIVE_ZOOM = 17;
 
 function getManualPickerFallbackView() {
   if (map) {
@@ -781,17 +783,19 @@ async function deleteDatacenter(item) {
 }
 
 function initMap() {
-  map = L.map('map').setView([-14.235, -51.9253], 4);
+  map = L.map('map', { maxZoom: MAP_MAX_ZOOM }).setView([-14.235, -51.9253], 4);
 
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 19,
+    maxNativeZoom: ESRI_SAFE_NATIVE_ZOOM,
+    maxZoom: MAP_MAX_ZOOM,
     attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
   }).addTo(map);
 
   L.tileLayer(
     'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
     {
-      maxZoom: 19,
+      maxNativeZoom: ESRI_SAFE_NATIVE_ZOOM,
+      maxZoom: MAP_MAX_ZOOM,
       opacity: 0.95,
       attribution: 'Labels &copy; Esri',
     }
@@ -813,19 +817,21 @@ function openManualMapPicker() {
 
   if (!manualPickerMap) {
     const fallback = getManualPickerFallbackView();
-    manualPickerMap = L.map(manualPickerMapElement).setView(
+    manualPickerMap = L.map(manualPickerMapElement, { maxZoom: MAP_MAX_ZOOM }).setView(
       [fallback.latitude, fallback.longitude],
       fallback.zoom
     );
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-      maxZoom: 19,
+      maxNativeZoom: ESRI_SAFE_NATIVE_ZOOM,
+      maxZoom: MAP_MAX_ZOOM,
       attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
     }).addTo(manualPickerMap);
 
     L.tileLayer(
       'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
       {
-        maxZoom: 19,
+        maxNativeZoom: ESRI_SAFE_NATIVE_ZOOM,
+        maxZoom: MAP_MAX_ZOOM,
         opacity: 0.95,
         attribution: 'Labels &copy; Esri',
       }
