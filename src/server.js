@@ -507,11 +507,25 @@ app.put('/api/admin/users/:id', requireAuth, requireCsrf, requireAdmin, async (r
       return res.status(400).json({ error: 'ID de usuário inválido' });
     }
 
-    const groupId = Number(req.body.groupId);
+    const username = String(req.body.username || '').trim().toLowerCase();
+    const email = String(req.body.email || '').trim().toLowerCase();
     const password = String(req.body.password || '').trim();
+    const rawGroupId = req.body.groupId;
+    let groupId = null;
 
-    if (groupId && (!Number.isInteger(groupId) || groupId <= 0)) {
-      return res.status(400).json({ error: 'Grupo inválido' });
+    if (!username || username.length > 200) {
+      return res.status(400).json({ error: 'Usuário inválido' });
+    }
+
+    if (email && (email.length > 200 || !email.includes('@'))) {
+      return res.status(400).json({ error: 'E-mail inválido' });
+    }
+
+    if (rawGroupId !== undefined && rawGroupId !== null && String(rawGroupId).trim() !== '') {
+      groupId = Number(rawGroupId);
+      if (!Number.isInteger(groupId) || groupId <= 0) {
+        return res.status(400).json({ error: 'Grupo inválido' });
+      }
     }
 
     if (groupId) {
@@ -525,42 +539,43 @@ app.put('/api/admin/users/:id', requireAuth, requireCsrf, requireAdmin, async (r
       if (password.length < 8 || password.length > 200) {
         return res.status(400).json({ error: 'Senha deve ter entre 8 e 200 caracteres' });
       }
-      
-      const passwordHash = await bcrypt.hash(password, 12);
-      const result = await query(
-        `
-          UPDATE users
-          SET group_id = COALESCE($1, group_id),
-              password_hash = $2
-          WHERE id = $3
-          RETURNING id, email, group_id, is_admin, created_at
-        `,
-        [groupId || null, passwordHash, id]
-      );
-
-      if (result.rowCount === 0) {
-        return res.status(404).json({ error: 'Usuário não encontrado' });
-      }
-
-      return res.json({ ok: true, item: result.rows[0] });
-    } else {
-      const result = await query(
-        `
-          UPDATE users
-          SET group_id = COALESCE($1, group_id)
-          WHERE id = $2
-          RETURNING id, email, group_id, is_admin, created_at
-        `,
-        [groupId || null, id]
-      );
-
-      if (result.rowCount === 0) {
-        return res.status(404).json({ error: 'Usuário não encontrado' });
-      }
-
-      return res.json({ ok: true, item: result.rows[0] });
     }
+
+    const passwordHash = password ? await bcrypt.hash(password, 12) : null;
+    const result = await query(
+      `
+        UPDATE users
+        SET username = $1,
+            email = $2,
+            group_id = $3,
+            password_hash = COALESCE($4, password_hash)
+        WHERE id = $5
+        RETURNING id, username, email, group_id, is_admin, created_at
+      `,
+      [username, email || null, groupId, passwordHash, id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    if (req.session.userId === id) {
+      req.session.username = result.rows[0].username;
+      req.session.userEmail = result.rows[0].email || result.rows[0].username;
+    }
+
+    return res.json({ ok: true, item: result.rows[0] });
   } catch (error) {
+    if (error?.code === '23505') {
+      const detail = String(error.detail || '').toLowerCase();
+      if (detail.includes('username')) {
+        return res.status(409).json({ error: 'Usuário já cadastrado' });
+      }
+      if (detail.includes('email')) {
+        return res.status(409).json({ error: 'E-mail já cadastrado' });
+      }
+      return res.status(409).json({ error: 'Já existe um usuário com esses dados' });
+    }
     console.error(error);
     return res.status(500).json({ error: 'Erro ao editar usuário' });
   }
@@ -571,6 +586,10 @@ app.delete('/api/admin/users/:id', requireAuth, requireCsrf, requireAdmin, async
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
       return res.status(400).json({ error: 'ID de usuário inválido' });
+    }
+
+    if (req.session.userId === id) {
+      return res.status(409).json({ error: 'Não é permitido excluir o próprio usuário autenticado' });
     }
 
     const result = await query('DELETE FROM users WHERE id = $1', [id]);

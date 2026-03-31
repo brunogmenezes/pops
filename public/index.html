@@ -261,6 +261,80 @@
       </div>
     </div>
 
+    <div
+      id="user-edit-modal"
+      class="modal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="user-edit-modal-title"
+    >
+      <div class="modal-card card modal-card-narrow">
+        <div class="modal-header">
+          <div>
+            <h3 id="user-edit-modal-title">Editar usuário</h3>
+            <p class="muted modal-subtitle">Atualize os dados de acesso com segurança.</p>
+          </div>
+        </div>
+        <form id="user-edit-form" class="stack-form">
+          <div>
+            <label for="user-edit-username">Usuário</label>
+            <input id="user-edit-username" name="username" type="text" maxlength="200" required />
+          </div>
+          <div>
+            <label for="user-edit-email">E-mail</label>
+            <input id="user-edit-email" name="email" type="email" maxlength="200" />
+          </div>
+          <div>
+            <label for="user-edit-group">Grupo</label>
+            <select id="user-edit-group" name="groupId">
+              <option value="">Sem grupo</option>
+            </select>
+          </div>
+          <div>
+            <label for="user-edit-password">Nova senha</label>
+            <input
+              id="user-edit-password"
+              name="password"
+              type="password"
+              minlength="8"
+              maxlength="200"
+              placeholder="Deixe em branco para manter a senha atual"
+            />
+          </div>
+          <div class="modal-actions">
+            <button id="user-edit-cancel-btn" type="button" class="secondary">Cancelar</button>
+            <button type="submit">Salvar usuário</button>
+          </div>
+        </form>
+        <p id="user-edit-message" class="message"></p>
+      </div>
+    </div>
+
+    <div
+      id="confirm-modal"
+      class="modal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="confirm-modal-title"
+    >
+      <div class="modal-card card modal-card-compact">
+        <div class="modal-header">
+          <div>
+            <h3 id="confirm-modal-title">Confirmar exclusão</h3>
+            <p id="confirm-modal-description" class="muted modal-subtitle"></p>
+          </div>
+        </div>
+        <div class="modal-note modal-note-danger">
+          Esta ação remove o acesso imediatamente e não pode ser desfeita.
+        </div>
+        <div class="modal-actions modal-actions-spread">
+          <button id="confirm-cancel-btn" type="button" class="secondary">Cancelar</button>
+          <button id="confirm-submit-btn" type="button" class="danger-btn">Excluir usuário</button>
+        </div>
+        <p id="confirm-message" class="message"></p>
+      </div>
+    </div>
+
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <script src="/app.js"></script>
   </body>

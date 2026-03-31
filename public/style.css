@@ -117,6 +117,14 @@ button.secondary {
   color: #c9d5ff;
 }
 
+.message[data-tone='success'] {
+  color: #6ee7b7;
+}
+
+.message[data-tone='danger'] {
+  color: #ff9b97;
+}
+
 .section-divider {
   border: 0;
   border-top: 1px solid var(--border);
@@ -245,6 +253,55 @@ button.secondary {
   padding: 18px;
 }
 
+.modal-card-narrow {
+  width: min(540px, 100%);
+}
+
+.modal-card-compact {
+  width: min(460px, 100%);
+}
+
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.modal-subtitle {
+  margin: 4px 0 0;
+}
+
+.stack-form {
+  display: grid;
+  gap: 10px;
+}
+
+.stack-form label {
+  margin-top: 0;
+}
+
+.stack-form input,
+.stack-form select {
+  margin-top: 0;
+}
+
+.modal-note {
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.modal-note-danger {
+  border-color: rgba(239, 83, 80, 0.35);
+  background: rgba(239, 83, 80, 0.08);
+  color: var(--text);
+}
+
 .modal-actions {
   grid-column: 1 / -1;
   display: flex;
@@ -256,6 +313,21 @@ button.secondary {
 .modal-actions button {
   width: auto;
   margin-top: 0;
+}
+
+.modal-actions-spread {
+  justify-content: space-between;
+  margin-top: 16px;
+}
+
+.danger-btn {
+  width: auto;
+  margin-top: 0;
+  background: var(--danger);
+}
+
+.danger-btn:hover {
+  background: #d9423f;
 }
 
 .dashboard {

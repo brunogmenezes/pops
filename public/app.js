@@ -36,6 +36,19 @@ const editCityInput = document.getElementById('edit-city');
 const editDistrictInput = document.getElementById('edit-district');
 const editLatitudeInput = document.getElementById('edit-latitude');
 const editLongitudeInput = document.getElementById('edit-longitude');
+const userEditModal = document.getElementById('user-edit-modal');
+const userEditForm = document.getElementById('user-edit-form');
+const userEditUsernameInput = document.getElementById('user-edit-username');
+const userEditEmailInput = document.getElementById('user-edit-email');
+const userEditGroupSelect = document.getElementById('user-edit-group');
+const userEditPasswordInput = document.getElementById('user-edit-password');
+const userEditMessage = document.getElementById('user-edit-message');
+const userEditCancelBtn = document.getElementById('user-edit-cancel-btn');
+const confirmModal = document.getElementById('confirm-modal');
+const confirmModalDescription = document.getElementById('confirm-modal-description');
+const confirmMessage = document.getElementById('confirm-message');
+const confirmCancelBtn = document.getElementById('confirm-cancel-btn');
+const confirmSubmitBtn = document.getElementById('confirm-submit-btn');
 const adminTabButton = document.getElementById('admin-tab-btn');
 const adminTab = document.getElementById('admin-tab');
 const adminSection = document.getElementById('admin-section');
@@ -52,6 +65,8 @@ const addDatacenterTabButton = document.querySelector('.tab-btn[data-tab="import
 let currentUserEmail = '';
 let editingDatacenterId = null;
 let editingGroupId = null;
+let editingUserId = null;
+let pendingDeleteUser = null;
 let currentIsAdmin = false;
 let currentPermissions = getDefaultPermissions();
 let availableGroups = [];
@@ -504,6 +519,30 @@ editModal.addEventListener('click', (event) => {
   }
 });
 
+userEditCancelBtn?.addEventListener('click', () => {
+  closeUserEditModal();
+});
+
+userEditModal?.addEventListener('click', (event) => {
+  if (event.target === userEditModal) {
+    closeUserEditModal();
+  }
+});
+
+confirmCancelBtn?.addEventListener('click', () => {
+  closeConfirmModal();
+});
+
+confirmModal?.addEventListener('click', (event) => {
+  if (event.target === confirmModal) {
+    closeConfirmModal();
+  }
+});
+
+confirmSubmitBtn?.addEventListener('click', async () => {
+  await confirmUserDeletion();
+});
+
 editForm.addEventListener('submit', async (event) => {
   event.preventDefault();
 
@@ -751,14 +790,25 @@ async function loadAdminGroups() {
 }
 
 function renderGroupOptions(groups) {
-  if (!userGroupSelect) return;
+  populateGroupSelect(userGroupSelect, groups, 'Selecione um grupo');
+  populateGroupSelect(userEditGroupSelect, groups, 'Sem grupo');
+}
 
-  userGroupSelect.innerHTML = '<option value="">Selecione um grupo</option>';
+function populateGroupSelect(selectEl, groups, placeholder) {
+  if (!selectEl) return;
+
+  selectEl.innerHTML = '';
+
+  const placeholderOption = document.createElement('option');
+  placeholderOption.value = '';
+  placeholderOption.textContent = placeholder;
+  selectEl.appendChild(placeholderOption);
+
   for (const group of groups) {
     const option = document.createElement('option');
     option.value = String(group.id);
     option.textContent = String(group.name || `Grupo ${group.id}`);
-    userGroupSelect.appendChild(option);
+    selectEl.appendChild(option);
   }
 }
 
@@ -941,12 +991,12 @@ function renderUserList(users) {
     const editBtn = li.querySelector('button[data-action="edit"]');
     const deleteBtn = li.querySelector('button[data-action="delete"]');
 
-    editBtn?.addEventListener('click', async () => {
-      await editUser(user);
+    editBtn?.addEventListener('click', () => {
+      openUserEditModal(user);
     });
 
-    deleteBtn?.addEventListener('click', async () => {
-      await deleteUser(user);
+    deleteBtn?.addEventListener('click', () => {
+      openDeleteUserModal(user);
     });
 
     userList.appendChild(li);
@@ -955,25 +1005,70 @@ function renderUserList(users) {
   if (userListMessage) userListMessage.textContent = '';
 }
 
-async function editUser(user) {
-  const newPassword = prompt(`Digite a nova senha para ${user.username}\n(deixe em branco para manter a senha atual):`);
-  if (newPassword === null) return;
+function openUserEditModal(user) {
+  editingUserId = Number(user.id);
+  userEditUsernameInput.value = String(user.username || '');
+  userEditEmailInput.value = String(user.email || '');
+  userEditGroupSelect.value = user.group_id ? String(user.group_id) : '';
+  userEditPasswordInput.value = '';
+  setMessage(userEditMessage, '', 'default');
+  userEditModal?.classList.remove('hidden');
+  userEditUsernameInput.focus();
+}
 
-  if (newPassword && newPassword.length < 8) {
-    alert('A senha deve ter pelo menos 8 caracteres.');
+function closeUserEditModal() {
+  editingUserId = null;
+  userEditForm?.reset();
+  setMessage(userEditMessage, '', 'default');
+  userEditModal?.classList.add('hidden');
+}
+
+function openDeleteUserModal(user) {
+  pendingDeleteUser = user;
+  if (confirmModalDescription) {
+    confirmModalDescription.textContent = `Você está prestes a excluir o usuário ${user.username}.`;
+  }
+  setMessage(confirmMessage, '', 'default');
+  confirmSubmitBtn?.removeAttribute('disabled');
+  confirmModal?.classList.remove('hidden');
+}
+
+function closeConfirmModal() {
+  pendingDeleteUser = null;
+  setMessage(confirmMessage, '', 'default');
+  confirmSubmitBtn?.removeAttribute('disabled');
+  confirmModal?.classList.add('hidden');
+}
+
+userEditForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+
+  if (!editingUserId) {
+    closeUserEditModal();
     return;
   }
 
-  const userListMessage = document.getElementById('user-list-message');
-  if (userListMessage) userListMessage.textContent = 'Atualizando usuário...';
+  const payload = {
+    username: userEditUsernameInput.value.trim().toLowerCase(),
+    email: userEditEmailInput.value.trim().toLowerCase(),
+    groupId: userEditGroupSelect.value,
+    password: userEditPasswordInput.value,
+  };
+
+  if (!payload.username) {
+    setMessage(userEditMessage, 'Usuário é obrigatório.', 'danger');
+    return;
+  }
+
+  if (payload.password && payload.password.length < 8) {
+    setMessage(userEditMessage, 'A senha deve ter pelo menos 8 caracteres.', 'danger');
+    return;
+  }
+
+  setMessage(userEditMessage, 'Salvando alterações...', 'default');
 
   try {
-    const payload = {};
-    if (newPassword) {
-      payload.password = newPassword;
-    }
-
-    const resp = await fetch(`/api/admin/users/${user.id}`, {
+    const resp = await fetch(`/api/admin/users/${editingUserId}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -984,26 +1079,29 @@ async function editUser(user) {
 
     const data = await resp.json();
     if (!resp.ok) {
-      if (userListMessage) userListMessage.textContent = data.error || 'Falha ao atualizar usuário';
+      setMessage(userEditMessage, data.error || 'Falha ao atualizar usuário.', 'danger');
       return;
     }
 
-    if (userListMessage) userListMessage.textContent = 'Usuário atualizado com sucesso.';
+    closeUserEditModal();
+    setUserListMessage('Usuário atualizado com sucesso.', 'success');
     await loadAdminUsers();
   } catch {
-    if (userListMessage) userListMessage.textContent = 'Erro de rede ao atualizar usuário';
+    setMessage(userEditMessage, 'Erro de rede ao atualizar usuário.', 'danger');
   }
-}
+});
 
-async function deleteUser(user) {
-  const ok = confirm(`Deseja excluir o usuário "${user.username}"?`);
-  if (!ok) return;
+async function confirmUserDeletion() {
+  if (!pendingDeleteUser) {
+    closeConfirmModal();
+    return;
+  }
 
-  const userListMessage = document.getElementById('user-list-message');
-  if (userListMessage) userListMessage.textContent = 'Excluindo usuário...';
+  setMessage(confirmMessage, 'Excluindo usuário...', 'default');
+  confirmSubmitBtn?.setAttribute('disabled', 'disabled');
 
   try {
-    const resp = await fetch(`/api/admin/users/${user.id}`, {
+    const resp = await fetch(`/api/admin/users/${pendingDeleteUser.id}`, {
       method: 'DELETE',
       headers: {
         'x-csrf-token': csrfToken,
@@ -1012,15 +1110,33 @@ async function deleteUser(user) {
 
     const data = await resp.json();
     if (!resp.ok) {
-      if (userListMessage) userListMessage.textContent = data.error || 'Falha ao excluir usuário';
+      setMessage(confirmMessage, data.error || 'Falha ao excluir usuário.', 'danger');
+      confirmSubmitBtn?.removeAttribute('disabled');
       return;
     }
 
-    if (userListMessage) userListMessage.textContent = 'Usuário excluído com sucesso.';
+    closeConfirmModal();
+    setUserListMessage('Usuário excluído com sucesso.', 'success');
     await loadAdminUsers();
   } catch {
-    if (userListMessage) userListMessage.textContent = 'Erro de rede ao excluir usuário';
+    setMessage(confirmMessage, 'Erro de rede ao excluir usuário.', 'danger');
+    confirmSubmitBtn?.removeAttribute('disabled');
   }
+}
+
+function setUserListMessage(text, tone = 'default') {
+  const userListMessage = document.getElementById('user-list-message');
+  setMessage(userListMessage, text, tone);
+}
+
+function setMessage(element, text, tone = 'default') {
+  if (!element) return;
+  element.textContent = text;
+  if (tone === 'default') {
+    element.removeAttribute('data-tone');
+    return;
+  }
+  element.setAttribute('data-tone', tone);
 }
 
 function getDefaultPermissions() {
