@@ -606,31 +606,7 @@ app.delete('/api/admin/users/:id', requireAuth, requireCsrf, requireAdmin, async
 
 app.get('/api/datacenters', requireAuth, async (req, res) => {
   try {
-    const city = String(req.query.city || '').trim();
-    const district = String(req.query.district || '').trim();
-    const q = String(req.query.q || '').trim();
-
-    const filters = [];
-    const params = [];
-
-    if (city) {
-      params.push(`%${city}%`);
-      filters.push(`(city ILIKE $${params.length} OR name ILIKE $${params.length})`);
-    }
-
-    if (district) {
-      params.push(`%${district}%`);
-      filters.push(`(district ILIKE $${params.length} OR name ILIKE $${params.length})`);
-    }
-
-    if (q) {
-      params.push(`%${q}%`);
-      filters.push(
-        `(name ILIKE $${params.length} OR city ILIKE $${params.length} OR district ILIKE $${params.length})`
-      );
-    }
-
-    const whereClause = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
+    const { whereClause, params } = buildDatacentersFilterClause(req.query);
 
     const sql = `
       SELECT id, name, city, district, latitude, longitude, created_at
@@ -645,6 +621,36 @@ app.get('/api/datacenters', requireAuth, async (req, res) => {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao buscar datacenters' });
+  }
+});
+
+app.get('/api/datacenters/export.kml', requireAuth, async (req, res) => {
+  try {
+    const { whereClause, params } = buildDatacentersFilterClause(req.query);
+    const result = await query(
+      `
+        SELECT id, name, city, district, latitude, longitude
+        FROM datacenters
+        ${whereClause}
+        ORDER BY COALESCE(city, ''), name ASC
+      `,
+      params
+    );
+
+    const items = result.rows || [];
+    if (items.length === 0) {
+      return res.status(404).json({ error: 'Nenhum datacenter encontrado para exportação' });
+    }
+
+    const kml = buildDatacentersKml(items);
+    const fileName = `pops-datacenters-${new Date().toISOString().slice(0, 10)}.kml`;
+
+    res.setHeader('Content-Type', 'application/vnd.google-earth.kml+xml; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    return res.send(kml);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao exportar KML' });
   }
 });
 
@@ -819,8 +825,8 @@ app.post('/api/import', requireAuth, requireCsrf, requirePermission('canImport',
   }
 
   try {
-    const geojson = await parseGeoJsonFromUpload(req.file.buffer, originalName);
-    const points = extractDatacenterPoints(geojson);
+    const parsed = await parseKmlContextFromUpload(req.file.buffer, originalName);
+    const points = extractDatacenterPoints(parsed);
 
     if (points.length === 0) {
       return res.status(400).json({ error: 'Nenhum ponto válido encontrado no arquivo' });
@@ -852,12 +858,24 @@ app.post('/api/import', requireAuth, requireCsrf, requirePermission('canImport',
 
       await client.query('COMMIT');
 
+      const groupedByCity = points.reduce((acc, point) => {
+        const city = normalizeText(point.city) || 'Sem cidade';
+        acc[city] = (acc[city] || 0) + 1;
+        return acc;
+      }, {});
+
+      const citySummary = Object.entries(groupedByCity)
+        .map(([city, total]) => ({ city, total }))
+        .sort((a, b) => b.total - a.total || a.city.localeCompare(b.city));
+
       return res.json({
         ok: true,
         mode,
         totalPointsInFile: points.length,
         imported: inserted,
         ignored: points.length - inserted,
+        totalCitiesInFile: citySummary.length,
+        citySummary,
         deletedBeforeImport: mode === 'overwrite' ? deleted : 0,
       });
     } catch (error) {
@@ -872,16 +890,40 @@ app.post('/api/import', requireAuth, requireCsrf, requirePermission('canImport',
   }
 });
 
+app.get('/api/datacenters/by-city', requireAuth, async (_req, res) => {
+  try {
+    const result = await query(`
+      SELECT
+        COALESCE(NULLIF(TRIM(city), ''), 'Sem cidade') AS city,
+        COUNT(*)::int AS total
+      FROM datacenters
+      GROUP BY 1
+      ORDER BY total DESC, city ASC
+    `);
+
+    return res.json({ items: result.rows });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao agregar datacenters por cidade' });
+  }
+});
+
 app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
 
-async function parseGeoJsonFromUpload(buffer, originalName) {
+async function parseKmlContextFromUpload(buffer, originalName) {
   let kmlBuffer = buffer;
 
   if (originalName.endsWith('.kmz')) {
     const zip = await JSZip.loadAsync(buffer);
-    const kmlFileName = Object.keys(zip.files).find((name) => name.toLowerCase().endsWith('.kml'));
+    const kmlFileName = Object.keys(zip.files)
+      .filter((name) => name.toLowerCase().endsWith('.kml'))
+      .sort((a, b) => {
+        const aIsDoc = a.toLowerCase().endsWith('doc.kml') ? -1 : 0;
+        const bIsDoc = b.toLowerCase().endsWith('doc.kml') ? -1 : 0;
+        return aIsDoc - bIsDoc || a.localeCompare(b);
+      })[0];
     if (!kmlFileName) {
       throw new Error('KMZ sem arquivo KML interno');
     }
@@ -890,10 +932,21 @@ async function parseGeoJsonFromUpload(buffer, originalName) {
 
   const xml = kmlBuffer.toString('utf8');
   const xmlDoc = new DOMParser().parseFromString(xml, 'text/xml');
-  return toGeoJSON.kml(xmlDoc);
+  const geojson = toGeoJSON.kml(xmlDoc);
+
+  return {
+    xmlDoc,
+    geojson,
+  };
 }
 
-function extractDatacenterPoints(geojson) {
+function extractDatacenterPoints(parsed) {
+  const hierarchicalPoints = extractHierarchicalDatacenterPoints(parsed.xmlDoc);
+  if (hierarchicalPoints.length > 0) {
+    return hierarchicalPoints;
+  }
+
+  const geojson = parsed.geojson;
   const features = Array.isArray(geojson?.features) ? geojson.features : [];
   const points = [];
 
@@ -939,6 +992,203 @@ function extractDatacenterPoints(geojson) {
   return points;
 }
 
+function extractHierarchicalDatacenterPoints(xmlDoc) {
+  if (!xmlDoc?.documentElement) {
+    return [];
+  }
+
+  const popsRoot = findPopsRootFolder(xmlDoc);
+  if (!popsRoot) {
+    return [];
+  }
+
+  const cityFolders = getDirectChildElementsByLocalName(popsRoot, 'Folder').filter((folder) => {
+    return normalizeFolderName(getNodeText(getFirstChildByLocalName(folder, 'name')));
+  });
+
+  if (cityFolders.length === 0) {
+    return [];
+  }
+
+  const points = [];
+
+  for (const cityFolder of cityFolders) {
+    const cityName = normalizeText(getNodeText(getFirstChildByLocalName(cityFolder, 'name')));
+    if (!cityName) continue;
+
+    const placemarks = collectPlacemarks(cityFolder);
+    for (const placemark of placemarks) {
+      const point = buildPointFromPlacemark(placemark, cityName);
+      if (point) {
+        points.push(point);
+      }
+    }
+  }
+
+  return points;
+}
+
+function findPopsRootFolder(xmlDoc) {
+  const folders = [];
+  traverseElements(xmlDoc.documentElement, (element) => {
+    if (getLocalName(element) === 'Folder') {
+      folders.push(element);
+    }
+  });
+
+  const explicitRoot = folders.find((folder) => {
+    const nameEl = getFirstChildByLocalName(folder, 'name');
+    return normalizeFolderName(getNodeText(nameEl)) === 'POPS JUPITER';
+  });
+
+  if (explicitRoot) {
+    return explicitRoot;
+  }
+
+  return null;
+}
+
+function collectPlacemarks(folderElement) {
+  const placemarks = [];
+  traverseElements(folderElement, (element) => {
+    if (getLocalName(element) === 'Placemark') {
+      placemarks.push(element);
+    }
+  });
+  return placemarks;
+}
+
+function buildPointFromPlacemark(placemarkElement, cityName) {
+  const pointElement = getFirstChildByLocalName(placemarkElement, 'Point');
+  if (!pointElement) {
+    return null;
+  }
+
+  const coordinatesText = getNodeText(getFirstChildByLocalName(pointElement, 'coordinates'));
+  const [longitude, latitude] = parseKmlPointCoordinates(coordinatesText);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  const properties = readPlacemarkProperties(placemarkElement);
+  const fromDescription = parseDescriptionFields(properties.description || '');
+
+  const name = normalizeText(properties.name || fromDescription.name || 'Datacenter sem nome');
+  const district = normalizeText(
+    properties.district ||
+      pickFirst(properties, ['bairro', 'neighborhood']) ||
+      fromDescription.district ||
+      ''
+  );
+
+  return {
+    name,
+    city: cityName,
+    district: district || null,
+    latitude,
+    longitude,
+  };
+}
+
+function readPlacemarkProperties(placemarkElement) {
+  const props = {};
+  props.name = getNodeText(getFirstChildByLocalName(placemarkElement, 'name'));
+  props.description = getNodeText(getFirstChildByLocalName(placemarkElement, 'description'));
+
+  const extendedData = getFirstChildByLocalName(placemarkElement, 'ExtendedData');
+  if (!extendedData) {
+    return props;
+  }
+
+  const dataNodes = getDirectChildElementsByLocalName(extendedData, 'Data');
+  for (const dataNode of dataNodes) {
+    const key = String(dataNode.getAttribute('name') || '').trim().toLowerCase();
+    const value = getNodeText(getFirstChildByLocalName(dataNode, 'value'));
+    if (key && value) {
+      props[key] = value;
+    }
+  }
+
+  const simpleDataNodes = getDirectChildElementsByLocalName(extendedData, 'SimpleData');
+  for (const simpleNode of simpleDataNodes) {
+    const key = String(simpleNode.getAttribute('name') || '').trim().toLowerCase();
+    const value = getNodeText(simpleNode);
+    if (key && value) {
+      props[key] = value;
+    }
+  }
+
+  return props;
+}
+
+function parseKmlPointCoordinates(rawCoordinates) {
+  const normalized = String(rawCoordinates || '').trim();
+  if (!normalized) {
+    return [NaN, NaN];
+  }
+
+  const firstTuple = normalized.split(/\s+/)[0] || '';
+  const parts = firstTuple.split(',');
+  const longitude = Number(parts[0]);
+  const latitude = Number(parts[1]);
+  return [longitude, latitude];
+}
+
+function getDirectChildElementsByLocalName(node, localName) {
+  if (!node?.childNodes) {
+    return [];
+  }
+
+  const children = [];
+  for (let i = 0; i < node.childNodes.length; i += 1) {
+    const child = node.childNodes[i];
+    if (child?.nodeType === 1 && getLocalName(child) === localName) {
+      children.push(child);
+    }
+  }
+
+  return children;
+}
+
+function getFirstChildByLocalName(node, localName) {
+  return getDirectChildElementsByLocalName(node, localName)[0] || null;
+}
+
+function traverseElements(node, visitor) {
+  if (!node || node.nodeType !== 1) {
+    return;
+  }
+
+  visitor(node);
+
+  if (!node.childNodes) {
+    return;
+  }
+
+  for (let i = 0; i < node.childNodes.length; i += 1) {
+    traverseElements(node.childNodes[i], visitor);
+  }
+}
+
+function getNodeText(node) {
+  if (!node) return '';
+  return String(node.textContent || '').trim();
+}
+
+function getLocalName(node) {
+  if (!node) return '';
+  return String(node.localName || node.nodeName || '')
+    .split(':')
+    .pop();
+}
+
+function normalizeFolderName(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+}
+
 function pickFirst(obj, keys) {
   for (const key of keys) {
     if (obj[key] !== undefined && obj[key] !== null && String(obj[key]).trim() !== '') {
@@ -974,6 +1224,101 @@ function parseDescriptionFields(description) {
   }
 
   return result;
+}
+
+function buildDatacentersFilterClause(rawQuery) {
+  const city = String(rawQuery?.city || '').trim();
+  const district = String(rawQuery?.district || '').trim();
+  const q = String(rawQuery?.q || '').trim();
+
+  const filters = [];
+  const params = [];
+
+  if (city) {
+    params.push(`%${city}%`);
+    filters.push(`(city ILIKE $${params.length} OR name ILIKE $${params.length})`);
+  }
+
+  if (district) {
+    params.push(`%${district}%`);
+    filters.push(`(district ILIKE $${params.length} OR name ILIKE $${params.length})`);
+  }
+
+  if (q) {
+    params.push(`%${q}%`);
+    filters.push(`(name ILIKE $${params.length} OR city ILIKE $${params.length} OR district ILIKE $${params.length})`);
+  }
+
+  return {
+    params,
+    whereClause: filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '',
+  };
+}
+
+function buildDatacentersKml(items) {
+  const groupedByCity = new Map();
+
+  for (const item of items) {
+    const city = normalizeText(item.city) || 'Sem cidade';
+    if (!groupedByCity.has(city)) {
+      groupedByCity.set(city, []);
+    }
+    groupedByCity.get(city).push(item);
+  }
+
+  const cityFolders = Array.from(groupedByCity.entries())
+    .sort((a, b) => a[0].localeCompare(b[0], 'pt-BR'))
+    .map(([city, cityItems]) => {
+      const placemarks = cityItems
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'))
+        .map((item) => {
+          const name = escapeXml(item.name || 'Datacenter sem nome');
+          const district = escapeXml(item.district || '');
+          const cityName = escapeXml(city);
+          const latitude = Number(item.latitude);
+          const longitude = Number(item.longitude);
+          const description = district
+            ? `<![CDATA[<b>Cidade:</b> ${cityName}<br/><b>Bairro:</b> ${district}]]>`
+            : `<![CDATA[<b>Cidade:</b> ${cityName}]]>`;
+
+          return `
+      <Placemark>
+        <name>${name}</name>
+        <description>${description}</description>
+        <Point>
+          <coordinates>${longitude},${latitude},0</coordinates>
+        </Point>
+      </Placemark>`;
+        })
+        .join('');
+
+      return `
+    <Folder>
+      <name>${escapeXml(city)}</name>
+      ${placemarks}
+    </Folder>`;
+    })
+    .join('');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>POPS JUPITER</name>
+    <Folder>
+      <name>POPS JUPITER</name>
+      ${cityFolders}
+    </Folder>
+  </Document>
+</kml>`;
+}
+
+function escapeXml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 }
 
 function normalizeText(value) {

@@ -215,8 +215,12 @@
               <label for="district">Bairro</label>
               <input id="district" name="district" type="text" />
             </div>
-            <button type="submit">Pesquisar</button>
+            <div class="filters-actions">
+              <button type="submit">Pesquisar</button>
+              <button id="export-kml-btn" type="button" class="secondary">Exportar KML</button>
+            </div>
           </form>
+          <p id="search-message" class="message"></p>
 
           <div class="results-map-grid">
             <div>
@@ -334,6 +338,8 @@
         <p id="confirm-message" class="message"></p>
       </div>
     </div>
+
+    <div id="subtle-toast" class="subtle-toast" aria-live="polite" aria-atomic="true"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <script src="/app.js"></script>

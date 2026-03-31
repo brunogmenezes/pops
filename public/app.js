@@ -21,6 +21,9 @@ const manualMessage = document.getElementById('manual-message');
 const manualSection = document.getElementById('manual-section');
 const addDatacenterPermissionMessage = document.getElementById('add-datacenter-permission-message');
 const searchForm = document.getElementById('search-form');
+const exportKmlBtn = document.getElementById('export-kml-btn');
+const searchMessage = document.getElementById('search-message');
+const subtleToast = document.getElementById('subtle-toast');
 const resultsEl = document.getElementById('results');
 const statTotalEl = document.getElementById('stat-total');
 const statWithCityEl = document.getElementById('stat-with-city');
@@ -67,6 +70,7 @@ let editingDatacenterId = null;
 let editingGroupId = null;
 let editingUserId = null;
 let pendingDeleteUser = null;
+let subtleToastTimer = null;
 let currentIsAdmin = false;
 let currentPermissions = getDefaultPermissions();
 let availableGroups = [];
@@ -232,7 +236,16 @@ importForm.addEventListener('submit', async (event) => {
       return;
     }
 
-    importMessage.textContent = `Importado com sucesso. Total no arquivo: ${data.totalPointsInFile}, inseridos: ${data.imported}, ignorados: ${data.ignored}.`;
+    const citySummary = Array.isArray(data.citySummary) ? data.citySummary : [];
+    const cityPreview = citySummary
+      .slice(0, 5)
+      .map((item) => `${item.city}: ${item.total}`)
+      .join(' | ');
+
+    importMessage.textContent =
+      `Importado com sucesso. Total no arquivo: ${data.totalPointsInFile}, inseridos: ${data.imported}, ` +
+      `ignorados: ${data.ignored}, cidades: ${data.totalCitiesInFile || 0}.` +
+      (cityPreview ? ` Resumo: ${cityPreview}.` : '');
     selectedDatacenterId = null;
     await loadStats();
     await runSearch();
@@ -379,6 +392,49 @@ searchForm.addEventListener('submit', async (event) => {
   await runSearch();
 });
 
+exportKmlBtn?.addEventListener('click', async () => {
+  const previousLabel = exportKmlBtn.textContent;
+  exportKmlBtn.disabled = true;
+  exportKmlBtn.textContent = 'Exportando...';
+  setMessage(searchMessage, 'Preparando arquivo KML...', 'default');
+
+  try {
+    const formData = new FormData(searchForm);
+    const q = encodeURIComponent(String(formData.get('q') || '').trim());
+    const city = encodeURIComponent(String(formData.get('city') || '').trim());
+    const district = encodeURIComponent(String(formData.get('district') || '').trim());
+    const url = `/api/datacenters/export.kml?q=${q}&city=${city}&district=${district}`;
+
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      setMessage(searchMessage, data.error || 'Falha ao exportar KML', 'danger');
+      return;
+    }
+
+    const blob = await resp.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+
+    const contentDisposition = resp.headers.get('content-disposition') || '';
+    const matched = contentDisposition.match(/filename="?([^";]+)"?/i);
+    link.download = matched?.[1] || `pops-datacenters-${new Date().toISOString().slice(0, 10)}.kml`;
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+    setMessage(searchMessage, '', 'default');
+    showSubtleToast('Arquivo KML exportado com sucesso.', 'success');
+  } catch {
+    setMessage(searchMessage, 'Erro de rede ao exportar KML', 'danger');
+  } finally {
+    exportKmlBtn.disabled = false;
+    exportKmlBtn.textContent = previousLabel;
+  }
+});
+
 searchForm.addEventListener('keyup', (event) => {
   const target = event.target;
   if (!target || !target.name) return;
@@ -398,6 +454,7 @@ function scheduleSearch() {
 }
 
 async function runSearch() {
+  setMessage(searchMessage, '', 'default');
   const formData = new FormData(searchForm);
   const q = encodeURIComponent(String(formData.get('q') || '').trim());
   const city = encodeURIComponent(String(formData.get('city') || '').trim());
@@ -432,60 +489,86 @@ function renderResults(items) {
   const canDelete = currentIsAdmin || currentPermissions.canDelete;
   const canShowActions = canEdit || canDelete;
 
+  const groupedByCity = new Map();
   for (const item of items) {
-    const li = document.createElement('li');
-    li.dataset.id = String(item.id);
-    li.innerHTML = `
-      <div class="result-top-row">
-        <strong>${escapeHtml(item.name)}</strong>
-        ${
-          canShowActions
-            ? `<div class="result-actions">
-                ${
-                  canEdit
-                    ? '<button type="button" class="icon-btn edit-btn" title="Editar" aria-label="Editar datacenter">✏️</button>'
-                    : ''
-                }
-                ${
-                  canDelete
-                    ? '<button type="button" class="icon-btn delete-btn" title="Excluir" aria-label="Excluir datacenter">🗑️</button>'
-                    : ''
-                }
-              </div>`
-            : ''
-        }
-      </div>
-      <small>${escapeHtml(item.city || '-')}, ${escapeHtml(item.district || '-')}</small><br/>
-      <small>Lat: ${Number(item.latitude).toFixed(6)} | Lng: ${Number(item.longitude).toFixed(6)}</small>
-    `;
-
-    if (selectedDatacenterId === item.id) {
-      li.classList.add('active');
+    const cityKey = normalizeResultCity(item.city);
+    if (!groupedByCity.has(cityKey)) {
+      groupedByCity.set(cityKey, []);
     }
-
-    li.addEventListener('click', () => {
-      selectedDatacenterId = item.id;
-      selectResultItem(item.id);
-      focusMap(item.id, item.latitude, item.longitude, item.name);
-    });
-
-    const editBtn = li.querySelector('.edit-btn');
-    const deleteBtn = li.querySelector('.delete-btn');
-
-    editBtn?.addEventListener('click', async (event) => {
-      event.stopPropagation();
-      if (!canEdit) return;
-      openEditModal(item);
-    });
-
-    deleteBtn?.addEventListener('click', async (event) => {
-      event.stopPropagation();
-      if (!canDelete) return;
-      await deleteDatacenter(item);
-    });
-
-    resultsEl.appendChild(li);
+    groupedByCity.get(cityKey).push(item);
   }
+
+  const sortedCities = Array.from(groupedByCity.keys()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  for (const city of sortedCities) {
+    const cityItems = groupedByCity.get(city) || [];
+    cityItems.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
+
+    const cityHeader = document.createElement('li');
+    cityHeader.className = 'result-group-header';
+    cityHeader.innerHTML = `<strong>${escapeHtml(city)}</strong><small>${cityItems.length} datacenter(s)</small>`;
+    resultsEl.appendChild(cityHeader);
+
+    for (const item of cityItems) {
+      const li = document.createElement('li');
+      li.classList.add('result-item');
+      li.dataset.id = String(item.id);
+      li.innerHTML = `
+        <div class="result-top-row">
+          <strong>${escapeHtml(item.name)}</strong>
+          ${
+            canShowActions
+              ? `<div class="result-actions">
+                  ${
+                    canEdit
+                      ? '<button type="button" class="icon-btn edit-btn" title="Editar" aria-label="Editar datacenter">✏️</button>'
+                      : ''
+                  }
+                  ${
+                    canDelete
+                      ? '<button type="button" class="icon-btn delete-btn" title="Excluir" aria-label="Excluir datacenter">🗑️</button>'
+                      : ''
+                  }
+                </div>`
+              : ''
+          }
+        </div>
+        <small>${escapeHtml(item.city || '-')}, ${escapeHtml(item.district || '-')}</small><br/>
+        <small>Lat: ${Number(item.latitude).toFixed(6)} | Lng: ${Number(item.longitude).toFixed(6)}</small>
+      `;
+
+      if (selectedDatacenterId === item.id) {
+        li.classList.add('active');
+      }
+
+      li.addEventListener('click', () => {
+        selectedDatacenterId = item.id;
+        selectResultItem(item.id);
+        focusMap(item.id, item.latitude, item.longitude, item.name);
+      });
+
+      const editBtn = li.querySelector('.edit-btn');
+      const deleteBtn = li.querySelector('.delete-btn');
+
+      editBtn?.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        if (!canEdit) return;
+        openEditModal(item);
+      });
+
+      deleteBtn?.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        if (!canDelete) return;
+        await deleteDatacenter(item);
+      });
+
+      resultsEl.appendChild(li);
+    }
+  }
+}
+
+function normalizeResultCity(city) {
+  const value = String(city || '').trim();
+  return value || 'Sem cidade';
 }
 
 function openEditModal(item) {
@@ -1137,6 +1220,22 @@ function setMessage(element, text, tone = 'default') {
     return;
   }
   element.setAttribute('data-tone', tone);
+}
+
+function showSubtleToast(text, tone = 'success') {
+  if (!subtleToast) return;
+
+  subtleToast.textContent = text;
+  subtleToast.setAttribute('data-tone', tone);
+  subtleToast.classList.add('show');
+
+  if (subtleToastTimer) {
+    clearTimeout(subtleToastTimer);
+  }
+
+  subtleToastTimer = setTimeout(() => {
+    subtleToast.classList.remove('show');
+  }, 2800);
 }
 
 function getDefaultPermissions() {
