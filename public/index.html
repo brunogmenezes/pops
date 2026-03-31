@@ -63,8 +63,8 @@
                 <input id="manual-city" name="city" type="text" maxlength="200" />
               </div>
               <div>
-                <label for="manual-district">Bairro</label>
-                <input id="manual-district" name="district" type="text" maxlength="200" />
+                <label for="manual-cnl">CNL</label>
+                <input id="manual-cnl" name="cnl" type="text" maxlength="200" />
               </div>
               <div>
                 <label for="manual-latitude">Latitude</label>
@@ -74,6 +74,7 @@
                 <label for="manual-longitude">Longitude</label>
                 <input id="manual-longitude" name="longitude" type="number" step="any" min="-180" max="180" required />
               </div>
+              <button id="open-manual-map-btn" type="button" class="secondary">Selecionar no minimapa</button>
               <button type="submit">Cadastrar datacenter</button>
             </form>
 
@@ -139,6 +140,10 @@
                       <input type="checkbox" name="canDelete" />
                       <span>Excluir datacenter</span>
                     </label>
+                    <label class="checkbox-row">
+                      <input type="checkbox" name="canExportKml" />
+                      <span>Exportar KML</span>
+                    </label>
                   </div>
 
                   <div class="group-form-actions">
@@ -193,8 +198,8 @@
               <strong id="stat-with-city">0</strong>
             </article>
             <article class="stat-card">
-              <p class="muted">Com bairro</p>
-              <strong id="stat-with-district">0</strong>
+              <p class="muted">Com CNL</p>
+              <strong id="stat-with-cnl">0</strong>
             </article>
             <article class="stat-card">
               <p class="muted">Resultado atual</p>
@@ -205,19 +210,19 @@
           <form id="search-form" class="filters">
             <div>
               <label for="q">Busca geral</label>
-              <input id="q" name="q" type="text" placeholder="Nome, cidade ou bairro" />
+              <input id="q" name="q" type="text" placeholder="Nome, cidade ou CNL" />
             </div>
             <div>
               <label for="city">Cidade</label>
               <input id="city" name="city" type="text" />
             </div>
             <div>
-              <label for="district">Bairro</label>
-              <input id="district" name="district" type="text" />
+              <label for="cnl">CNL</label>
+              <input id="cnl" name="cnl" type="text" />
             </div>
             <div class="filters-actions">
               <button type="submit">Pesquisar</button>
-              <button id="export-kml-btn" type="button" class="secondary">Exportar KML</button>
+              <button id="export-kml-btn" type="button" class="secondary hidden">Exportar KML</button>
             </div>
           </form>
           <p id="search-message" class="message"></p>
@@ -245,8 +250,8 @@
             <input id="edit-city" name="city" type="text" maxlength="200" />
           </div>
           <div>
-            <label for="edit-district">Bairro</label>
-            <input id="edit-district" name="district" type="text" maxlength="200" />
+            <label for="edit-cnl">CNL</label>
+            <input id="edit-cnl" name="cnl" type="text" maxlength="200" />
           </div>
           <div>
             <label for="edit-latitude">Latitude</label>
@@ -262,6 +267,31 @@
           </div>
         </form>
         <p id="edit-message" class="message"></p>
+      </div>
+    </div>
+
+    <div
+      id="manual-map-modal"
+      class="modal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="manual-map-modal-title"
+    >
+      <div class="modal-card card modal-card-map">
+        <div class="modal-header">
+          <div>
+            <h3 id="manual-map-modal-title">Selecionar localização</h3>
+            <p class="muted modal-subtitle">Clique no minimapa para definir latitude e longitude.</p>
+          </div>
+        </div>
+
+        <div id="manual-picker-map" class="manual-picker-map"></div>
+        <p id="manual-map-selection" class="message">Nenhuma coordenada selecionada.</p>
+
+        <div class="modal-actions modal-actions-spread">
+          <button id="manual-map-cancel-btn" type="button" class="secondary">Cancelar</button>
+          <button id="manual-map-apply-btn" type="button">Usar localização</button>
+        </div>
       </div>
     </div>
 
@@ -328,7 +358,7 @@
             <p id="confirm-modal-description" class="muted modal-subtitle"></p>
           </div>
         </div>
-        <div class="modal-note modal-note-danger">
+        <div id="confirm-modal-note" class="modal-note modal-note-danger">
           Esta ação remove o acesso imediatamente e não pode ser desfeita.
         </div>
         <div class="modal-actions modal-actions-spread">

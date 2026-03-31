@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">
+<Document>
+	<name>POPS JUPITER teste.kml</name>
+	<StyleMap id="m_ylw-pushpin">
+		<Pair>
+			<key>normal</key>
+			<styleUrl>#s_ylw-pushpin</styleUrl>
+		</Pair>
+		<Pair>
+			<key>highlight</key>
+			<styleUrl>#s_ylw-pushpin_hl</styleUrl>
+		</Pair>
+	</StyleMap>
+	<Style id="s_ylw-pushpin">
+		<IconStyle>
+			<scale>1.1</scale>
+			<Icon>
+				<href>http://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png</href>
+			</Icon>
+			<hotSpot x="20" y="2" xunits="pixels" yunits="pixels"/>
+		</IconStyle>
+	</Style>
+	<Style id="s_ylw-pushpin_hl">
+		<IconStyle>
+			<scale>1.3</scale>
+			<Icon>
+				<href>http://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png</href>
+			</Icon>
+			<hotSpot x="20" y="2" xunits="pixels" yunits="pixels"/>
+		</IconStyle>
+	</Style>
+	<Folder>
+		<name>POPS JUPITER</name>
+		<open>1</open>
+		<Folder>
+			<name>BREJAO</name>
+			<Placemark>
+				<name>pop brejao</name>
+				<LookAt>
+					<longitude>-47.39043241407727</longitude>
+					<latitude>-5.121674007822671</latitude>
+					<altitude>0</altitude>
+					<heading>-0.9823861771352524</heading>
+					<tilt>24.01031001564875</tilt>
+					<range>564.7798993092922</range>
+					<gx:altitudeMode>relativeToSeaFloor</gx:altitudeMode>
+				</LookAt>
+				<styleUrl>#m_ylw-pushpin</styleUrl>
+				<Point>
+					<gx:drawOrder>1</gx:drawOrder>
+					<coordinates>-47.39145780474363,-5.122638872981877,0</coordinates>
+				</Point>
+			</Placemark>
+		</Folder>
+		<Folder>
+			<name>Açailandia</name>
+			<Placemark>
+				<name>POP LUCIANO</name>
+				<LookAt>
+					<longitude>-47.47874559206664</longitude>
+					<latitude>-4.957364436148623</latitude>
+					<altitude>0</altitude>
+					<heading>-0.9777479514860451</heading>
+					<tilt>3.062661154753163</tilt>
+					<range>11317.14169802122</range>
+					<gx:altitudeMode>relativeToSeaFloor</gx:altitudeMode>
+				</LookAt>
+				<styleUrl>#m_ylw-pushpin</styleUrl>
+				<Point>
+					<gx:drawOrder>1</gx:drawOrder>
+					<coordinates>-47.49928103402252,-4.953754722572848,0</coordinates>
+				</Point>
+			</Placemark>
+			<Placemark>
+				<name>PLANO DA SERRA</name>
+				<LookAt>
+					<longitude>-47.47874559206664</longitude>
+					<latitude>-4.957364436148623</latitude>
+					<altitude>0</altitude>
+					<heading>-0.9777479514860451</heading>
+					<tilt>3.062661154753163</tilt>
+					<range>11317.14169802122</range>
+					<gx:altitudeMode>relativeToSeaFloor</gx:altitudeMode>
+				</LookAt>
+				<styleUrl>#m_ylw-pushpin</styleUrl>
+				<Point>
+					<gx:drawOrder>1</gx:drawOrder>
+					<coordinates>-47.46730319370243,-4.946273746285257,0</coordinates>
+				</Point>
+			</Placemark>
+		</Folder>
+		<Folder>
+			<name>Imperatriz</name>
+			<Placemark>
+				<name>PLANALTO</name>
+				<LookAt>
+					<longitude>-47.47827987947688</longitude>
+					<latitude>-5.494972774075389</latitude>
+					<altitude>0</altitude>
+					<heading>-0.9784088783050738</heading>
+					<tilt>17.12554682408319</tilt>
+					<range>349.5497429291215</range>
+					<gx:altitudeMode>relativeToSeaFloor</gx:altitudeMode>
+				</LookAt>
+				<styleUrl>#m_ylw-pushpin</styleUrl>
+				<Point>
+					<gx:drawOrder>1</gx:drawOrder>
+					<coordinates>-47.47869968907789,-5.495211407512009,0</coordinates>
+				</Point>
+			</Placemark>
+			<Placemark>
+				<name>CARLOS DRUMOND</name>
+				<LookAt>
+					<longitude>-47.47827987947688</longitude>
+					<latitude>-5.494972774075389</latitude>
+					<altitude>0</altitude>
+					<heading>-0.9784088783050738</heading>
+					<tilt>17.12554682408319</tilt>
+					<range>349.5497429291215</range>
+					<gx:altitudeMode>relativeToSeaFloor</gx:altitudeMode>
+				</LookAt>
+				<styleUrl>#m_ylw-pushpin</styleUrl>
+				<Point>
+					<gx:drawOrder>1</gx:drawOrder>
+					<coordinates>-47.47892581409565,-5.494546446228034,0</coordinates>
+				</Point>
+			</Placemark>
+			<Placemark>
+				<name>SIMPLICIO</name>
+				<LookAt>
+					<longitude>-47.48536822710481</longitude>
+					<latitude>-5.531064226286347</latitude>
+					<altitude>0</altitude>
+					<heading>-0.9771571518266221</heading>
+					<tilt>25.81100715370634</tilt>
+					<range>193.5460364553293</range>
+					<gx:altitudeMode>relativeToSeaFloor</gx:altitudeMode>
+				</LookAt>
+				<styleUrl>#m_ylw-pushpin</styleUrl>
+				<Point>
+					<gx:drawOrder>1</gx:drawOrder>
+					<coordinates>-47.48585220045308,-5.530842076570656,0</coordinates>
+				</Point>
+			</Placemark>
+		</Folder>
+		<atom:link rel="app" href="https://www.google.com/earth/about/versions/#earth-pro" title="Google Earth Pro 7.3.7.1094"></atom:link>
+	</Folder>
+</Document>
+</kml>

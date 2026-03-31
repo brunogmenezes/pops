@@ -1,6 +1,9 @@
 let csrfToken = '';
 let map;
 let marker;
+let manualPickerMap;
+let manualPickerMarker;
+let selectedManualCoordinates = null;
 let searchDebounceTimer;
 let markersLayer;
 const markerById = new Map();
@@ -18,6 +21,14 @@ const importSection = document.getElementById('import-section');
 const importSectionDivider = document.getElementById('import-section-divider');
 const manualForm = document.getElementById('manual-form');
 const manualMessage = document.getElementById('manual-message');
+const manualLatitudeInput = document.getElementById('manual-latitude');
+const manualLongitudeInput = document.getElementById('manual-longitude');
+const openManualMapBtn = document.getElementById('open-manual-map-btn');
+const manualMapModal = document.getElementById('manual-map-modal');
+const manualPickerMapElement = document.getElementById('manual-picker-map');
+const manualMapSelectionMessage = document.getElementById('manual-map-selection');
+const manualMapApplyBtn = document.getElementById('manual-map-apply-btn');
+const manualMapCancelBtn = document.getElementById('manual-map-cancel-btn');
 const manualSection = document.getElementById('manual-section');
 const addDatacenterPermissionMessage = document.getElementById('add-datacenter-permission-message');
 const searchForm = document.getElementById('search-form');
@@ -27,7 +38,7 @@ const subtleToast = document.getElementById('subtle-toast');
 const resultsEl = document.getElementById('results');
 const statTotalEl = document.getElementById('stat-total');
 const statWithCityEl = document.getElementById('stat-with-city');
-const statWithDistrictEl = document.getElementById('stat-with-district');
+const statWithCnlEl = document.getElementById('stat-with-cnl');
 const statFilteredEl = document.getElementById('stat-filtered');
 const themeSelect = document.getElementById('theme-select');
 const editModal = document.getElementById('edit-modal');
@@ -36,7 +47,7 @@ const editMessage = document.getElementById('edit-message');
 const editCancelBtn = document.getElementById('edit-cancel-btn');
 const editNameInput = document.getElementById('edit-name');
 const editCityInput = document.getElementById('edit-city');
-const editDistrictInput = document.getElementById('edit-district');
+const editCnlInput = document.getElementById('edit-cnl');
 const editLatitudeInput = document.getElementById('edit-latitude');
 const editLongitudeInput = document.getElementById('edit-longitude');
 const userEditModal = document.getElementById('user-edit-modal');
@@ -48,7 +59,9 @@ const userEditPasswordInput = document.getElementById('user-edit-password');
 const userEditMessage = document.getElementById('user-edit-message');
 const userEditCancelBtn = document.getElementById('user-edit-cancel-btn');
 const confirmModal = document.getElementById('confirm-modal');
+const confirmModalTitle = document.getElementById('confirm-modal-title');
 const confirmModalDescription = document.getElementById('confirm-modal-description');
+const confirmModalNote = document.getElementById('confirm-modal-note');
 const confirmMessage = document.getElementById('confirm-message');
 const confirmCancelBtn = document.getElementById('confirm-cancel-btn');
 const confirmSubmitBtn = document.getElementById('confirm-submit-btn');
@@ -69,11 +82,30 @@ let currentUserEmail = '';
 let editingDatacenterId = null;
 let editingGroupId = null;
 let editingUserId = null;
-let pendingDeleteUser = null;
 let subtleToastTimer = null;
+let confirmDialogResolver = null;
 let currentIsAdmin = false;
 let currentPermissions = getDefaultPermissions();
 let availableGroups = [];
+
+const MANUAL_PICKER_DEFAULT = {
+  latitude: -5.514589,
+  longitude: -47.485614,
+  zoom: 11,
+};
+
+function getManualPickerFallbackView() {
+  if (map) {
+    const center = map.getCenter();
+    return {
+      latitude: Number(center.lat),
+      longitude: Number(center.lng),
+      zoom: Number(map.getZoom()),
+    };
+  }
+
+  return { ...MANUAL_PICKER_DEFAULT };
+}
 
 setupTabs();
 initMap();
@@ -216,7 +248,14 @@ importForm.addEventListener('submit', async (event) => {
   const mode = String(formData.get('mode') || 'skip_existing');
 
   if (mode === 'overwrite') {
-    const ok = window.confirm('Isto vai apagar os dados atuais e importar os novos. Deseja continuar?');
+    const ok = await openConfirmDialog({
+      title: 'Substituir dados atuais?',
+      description: 'Esta operação apagará os datacenters atuais e importará os dados do arquivo selecionado.',
+      note: 'Esta ação é irreversível. Faça backup antes, se necessário.',
+      confirmLabel: 'Apagar e importar',
+      confirmStyle: 'danger',
+    });
+
     if (!ok) {
       importMessage.textContent = 'Importação cancelada.';
       return;
@@ -268,7 +307,7 @@ manualForm.addEventListener('submit', async (event) => {
   const payload = {
     name: String(formData.get('name') || '').trim(),
     city: String(formData.get('city') || '').trim(),
-    district: String(formData.get('district') || '').trim(),
+    cnl: String(formData.get('cnl') || '').trim(),
     latitude: String(formData.get('latitude') || '').trim(),
     longitude: String(formData.get('longitude') || '').trim(),
   };
@@ -299,6 +338,33 @@ manualForm.addEventListener('submit', async (event) => {
   }
 });
 
+openManualMapBtn?.addEventListener('click', () => {
+  openManualMapPicker();
+});
+
+manualMapCancelBtn?.addEventListener('click', () => {
+  closeManualMapPicker();
+});
+
+manualMapModal?.addEventListener('click', (event) => {
+  if (event.target === manualMapModal) {
+    closeManualMapPicker();
+  }
+});
+
+manualMapApplyBtn?.addEventListener('click', () => {
+  if (!selectedManualCoordinates) {
+    setMessage(manualMapSelectionMessage, 'Selecione uma coordenada no minimapa.', 'danger');
+    return;
+  }
+
+  manualLatitudeInput.value = selectedManualCoordinates.latitude.toFixed(6);
+  manualLongitudeInput.value = selectedManualCoordinates.longitude.toFixed(6);
+  setMessage(manualMessage, '', 'default');
+  showSubtleToast('Coordenadas selecionadas no minimapa.', 'success');
+  closeManualMapPicker();
+});
+
 groupForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
   const isEditing = Number.isInteger(editingGroupId) && editingGroupId > 0;
@@ -307,10 +373,11 @@ groupForm?.addEventListener('submit', async (event) => {
   const formData = new FormData(groupForm);
   const payload = {
     name: String(formData.get('name') || '').trim(),
-    canImport: formData.get('canImport') !== null,
-    canCreate: formData.get('canCreate') !== null,
-    canEdit: formData.get('canEdit') !== null,
-    canDelete: formData.get('canDelete') !== null,
+    canImport:    formData.get('canImport') !== null,
+    canCreate:    formData.get('canCreate') !== null,
+    canEdit:      formData.get('canEdit') !== null,
+    canDelete:    formData.get('canDelete') !== null,
+    canExportKml: formData.get('canExportKml') !== null,
   };
 
   try {
@@ -402,8 +469,8 @@ exportKmlBtn?.addEventListener('click', async () => {
     const formData = new FormData(searchForm);
     const q = encodeURIComponent(String(formData.get('q') || '').trim());
     const city = encodeURIComponent(String(formData.get('city') || '').trim());
-    const district = encodeURIComponent(String(formData.get('district') || '').trim());
-    const url = `/api/datacenters/export.kml?q=${q}&city=${city}&district=${district}`;
+    const cnl = encodeURIComponent(String(formData.get('cnl') || '').trim());
+    const url = `/api/datacenters/export.kml?q=${q}&city=${city}&cnl=${cnl}`;
 
     const resp = await fetch(url);
     if (!resp.ok) {
@@ -439,7 +506,7 @@ searchForm.addEventListener('keyup', (event) => {
   const target = event.target;
   if (!target || !target.name) return;
 
-  if (['q', 'city', 'district'].includes(target.name)) {
+  if (['q', 'city', 'cnl'].includes(target.name)) {
     scheduleSearch();
   }
 });
@@ -458,9 +525,9 @@ async function runSearch() {
   const formData = new FormData(searchForm);
   const q = encodeURIComponent(String(formData.get('q') || '').trim());
   const city = encodeURIComponent(String(formData.get('city') || '').trim());
-  const district = encodeURIComponent(String(formData.get('district') || '').trim());
+  const cnl = encodeURIComponent(String(formData.get('cnl') || '').trim());
 
-  const url = `/api/datacenters?q=${q}&city=${city}&district=${district}`;
+  const url = `/api/datacenters?q=${q}&city=${city}&cnl=${cnl}`;
 
   const resp = await fetch(url);
   const data = await resp.json();
@@ -532,7 +599,7 @@ function renderResults(items) {
               : ''
           }
         </div>
-        <small>${escapeHtml(item.city || '-')}, ${escapeHtml(item.district || '-')}</small><br/>
+        <small>Cidade: ${escapeHtml(item.city || '-')} | CNL: ${escapeHtml(item.cnl || item.district || '-')}</small><br/>
         <small>Lat: ${Number(item.latitude).toFixed(6)} | Lng: ${Number(item.longitude).toFixed(6)}</small>
       `;
 
@@ -543,7 +610,7 @@ function renderResults(items) {
       li.addEventListener('click', () => {
         selectedDatacenterId = item.id;
         selectResultItem(item.id);
-        focusMap(item.id, item.latitude, item.longitude, item.name);
+        focusMap(item.id, item.latitude, item.longitude, item.name, item.cnl || item.district);
       });
 
       const editBtn = li.querySelector('.edit-btn');
@@ -579,7 +646,7 @@ function openEditModal(item) {
   editingDatacenterId = item.id;
   editNameInput.value = item.name || '';
   editCityInput.value = item.city || '';
-  editDistrictInput.value = item.district || '';
+  editCnlInput.value = item.cnl || item.district || '';
   editLatitudeInput.value = String(item.latitude ?? '');
   editLongitudeInput.value = String(item.longitude ?? '');
   editMessage.textContent = '';
@@ -613,17 +680,17 @@ userEditModal?.addEventListener('click', (event) => {
 });
 
 confirmCancelBtn?.addEventListener('click', () => {
-  closeConfirmModal();
+  resolveConfirmDialog(false);
 });
 
 confirmModal?.addEventListener('click', (event) => {
   if (event.target === confirmModal) {
-    closeConfirmModal();
+    resolveConfirmDialog(false);
   }
 });
 
-confirmSubmitBtn?.addEventListener('click', async () => {
-  await confirmUserDeletion();
+confirmSubmitBtn?.addEventListener('click', () => {
+  resolveConfirmDialog(true);
 });
 
 editForm.addEventListener('submit', async (event) => {
@@ -651,7 +718,7 @@ editForm.addEventListener('submit', async (event) => {
       body: JSON.stringify({
         name: editNameInput.value.trim(),
         city: editCityInput.value.trim(),
-        district: editDistrictInput.value.trim(),
+        cnl: editCnlInput.value.trim(),
         latitude: editLatitudeInput.value.trim(),
         longitude: editLongitudeInput.value.trim(),
       }),
@@ -674,11 +741,18 @@ editForm.addEventListener('submit', async (event) => {
 
 async function deleteDatacenter(item) {
   if (!currentIsAdmin && !currentPermissions.canDelete) {
-    alert('Seu usuário não tem permissão para excluir datacenter.');
+    setMessage(searchMessage, 'Seu usuário não tem permissão para excluir datacenter.', 'danger');
     return;
   }
 
-  const ok = confirm(`Deseja excluir o datacenter "${item.name}"?`);
+  const ok = await openConfirmDialog({
+    title: 'Excluir datacenter?',
+    description: `Deseja excluir o datacenter "${item.name}"?`,
+    note: 'Esta ação remove o datacenter permanentemente.',
+    confirmLabel: 'Excluir datacenter',
+    confirmStyle: 'danger',
+  });
+
   if (!ok) return;
 
   try {
@@ -689,7 +763,7 @@ async function deleteDatacenter(item) {
 
     const data = await resp.json();
     if (!resp.ok) {
-      alert(data.error || 'Falha ao excluir datacenter');
+      setMessage(searchMessage, data.error || 'Falha ao excluir datacenter', 'danger');
       return;
     }
 
@@ -697,24 +771,132 @@ async function deleteDatacenter(item) {
       selectedDatacenterId = null;
     }
 
+    setMessage(searchMessage, '', 'default');
+    showSubtleToast('Datacenter excluído com sucesso.', 'success');
     await loadStats();
     await runSearch();
   } catch {
-    alert('Erro de rede ao excluir datacenter');
+    setMessage(searchMessage, 'Erro de rede ao excluir datacenter', 'danger');
   }
 }
 
 function initMap() {
   map = L.map('map').setView([-14.235, -51.9253], 4);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 19,
-    attribution: '&copy; OpenStreetMap contributors',
+    attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
   }).addTo(map);
+
+  L.tileLayer(
+    'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    {
+      maxZoom: 19,
+      opacity: 0.95,
+      attribution: 'Labels &copy; Esri',
+    }
+  ).addTo(map);
 
   markersLayer = L.layerGroup().addTo(map);
 }
 
-function focusMap(id, lat, lng, label) {
+function openManualMapPicker() {
+  if (!manualMapModal || !manualPickerMapElement) return;
+
+  manualMapModal.classList.remove('hidden');
+
+  const rawLatitude = String(manualLatitudeInput?.value || '').trim();
+  const rawLongitude = String(manualLongitudeInput?.value || '').trim();
+  const latitude = Number(rawLatitude);
+  const longitude = Number(rawLongitude);
+  const hasValidInput = rawLatitude !== '' && rawLongitude !== '' && Number.isFinite(latitude) && Number.isFinite(longitude);
+
+  if (!manualPickerMap) {
+    const fallback = getManualPickerFallbackView();
+    manualPickerMap = L.map(manualPickerMapElement).setView(
+      [fallback.latitude, fallback.longitude],
+      fallback.zoom
+    );
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 19,
+      attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+    }).addTo(manualPickerMap);
+
+    L.tileLayer(
+      'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+      {
+        maxZoom: 19,
+        opacity: 0.95,
+        attribution: 'Labels &copy; Esri',
+      }
+    ).addTo(manualPickerMap);
+
+    manualPickerMap.on('click', (event) => {
+      const lat = Number(event.latlng.lat);
+      const lng = Number(event.latlng.lng);
+
+      selectedManualCoordinates = { latitude: lat, longitude: lng };
+      setMessage(
+        manualMapSelectionMessage,
+        `Latitude: ${lat.toFixed(6)} | Longitude: ${lng.toFixed(6)}`,
+        'success'
+      );
+
+      if (!manualPickerMarker) {
+        manualPickerMarker = L.marker([lat, lng]).addTo(manualPickerMap);
+      } else {
+        manualPickerMarker.setLatLng([lat, lng]);
+      }
+    });
+  }
+
+  setTimeout(() => {
+    manualPickerMap.invalidateSize();
+
+    if (hasValidInput) {
+      manualPickerMap.setView([latitude, longitude], 14);
+      selectedManualCoordinates = { latitude, longitude };
+      setMessage(
+        manualMapSelectionMessage,
+        `Latitude: ${latitude.toFixed(6)} | Longitude: ${longitude.toFixed(6)}`,
+        'success'
+      );
+
+      if (!manualPickerMarker) {
+        manualPickerMarker = L.marker([latitude, longitude]).addTo(manualPickerMap);
+      } else {
+        manualPickerMarker.setLatLng([latitude, longitude]);
+      }
+      return;
+    }
+
+    selectedManualCoordinates = null;
+    if (manualPickerMarker) {
+      manualPickerMap.removeLayer(manualPickerMarker);
+      manualPickerMarker = null;
+    }
+
+    const fallback = getManualPickerFallbackView();
+    manualPickerMap.setView(
+      [fallback.latitude, fallback.longitude],
+      fallback.zoom
+    );
+    setMessage(manualMapSelectionMessage, 'Nenhuma coordenada selecionada.', 'default');
+  }, 60);
+}
+
+function closeManualMapPicker() {
+  if (!manualMapModal) return;
+  manualMapModal.classList.add('hidden');
+}
+
+function buildDatacenterPopupHtml(label, cnl) {
+  const safeName = escapeHtml(label || 'Datacenter');
+  const safeCnl = escapeHtml(cnl || '-');
+  return `<strong>${safeName}</strong><br/><small>CNL: ${safeCnl}</small>`;
+}
+
+function focusMap(id, lat, lng, label, cnl = '') {
   const latitude = Number(lat);
   const longitude = Number(lng);
 
@@ -739,7 +921,7 @@ function focusMap(id, lat, lng, label) {
   }
 
   marker = L.marker([latitude, longitude]).addTo(map);
-  marker.bindPopup(`<strong>${escapeHtml(label || 'Datacenter')}</strong>`).openPopup();
+  marker.bindPopup(buildDatacenterPopupHtml(label, cnl)).openPopup();
 }
 
 function renderMapMarkers(items) {
@@ -761,7 +943,7 @@ function renderMapMarkers(items) {
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) continue;
 
     const mk = L.marker([latitude, longitude]);
-    mk.bindPopup(`<strong>${escapeHtml(item.name || 'Datacenter')}</strong>`);
+    mk.bindPopup(buildDatacenterPopupHtml(item.name, item.cnl || item.district));
     mk.on('click', () => {
       selectedDatacenterId = item.id;
       selectResultItem(item.id);
@@ -774,7 +956,7 @@ function renderMapMarkers(items) {
   if (selectedDatacenterId && markerById.has(selectedDatacenterId)) {
     const selected = items.find((x) => x.id === selectedDatacenterId);
     if (selected) {
-      focusMap(selected.id, selected.latitude, selected.longitude, selected.name);
+      focusMap(selected.id, selected.latitude, selected.longitude, selected.name, selected.cnl || selected.district);
       return;
     }
   }
@@ -799,7 +981,7 @@ async function loadStats() {
     const stats = await resp.json();
     statTotalEl.textContent = String(stats.total || 0);
     statWithCityEl.textContent = String(stats.with_city || 0);
-    statWithDistrictEl.textContent = String(stats.with_district || 0);
+    statWithCnlEl.textContent = String(stats.with_cnl || stats.with_district || 0);
   } catch {
     // silencia erro de stats e mantém a tela funcional
   }
@@ -809,10 +991,11 @@ function setAccessContext(data) {
   currentIsAdmin = Boolean(data?.isAdmin);
   const incoming = data?.permissions || {};
   currentPermissions = {
-    canImport: Boolean(incoming.canImport),
-    canCreate: Boolean(incoming.canCreate),
-    canEdit: Boolean(incoming.canEdit),
-    canDelete: Boolean(incoming.canDelete),
+    canImport:    Boolean(incoming.canImport),
+    canCreate:    Boolean(incoming.canCreate),
+    canEdit:      Boolean(incoming.canEdit),
+    canDelete:    Boolean(incoming.canDelete),
+    canExportKml: Boolean(incoming.canExportKml),
   };
   applyFeatureVisibility();
 }
@@ -840,6 +1023,9 @@ function applyFeatureVisibility() {
   if (adminTabButton) adminTabButton.classList.toggle('hidden', !currentIsAdmin);
   if (adminTab) adminTab.classList.toggle('hidden', !currentIsAdmin);
 
+  const canExportKml = currentIsAdmin || currentPermissions.canExportKml;
+  if (exportKmlBtn) exportKmlBtn.classList.toggle('hidden', !canExportKml);
+
   const activeTabButton = document.querySelector('.tab-btn.active');
   const activeTabId = activeTabButton?.getAttribute('data-tab');
   if ((!canAddDatacenter && activeTabId === 'import-tab') || (!currentIsAdmin && activeTabId === 'admin-tab')) {
@@ -856,19 +1042,38 @@ async function loadAdminGroups() {
     return;
   }
 
-  try {
-    const resp = await fetch('/api/admin/groups');
-    const data = await resp.json();
-    if (!resp.ok) {
-      groupMessage.textContent = data.error || 'Falha ao carregar grupos';
-      return;
-    }
+  if (groupMessage) groupMessage.textContent = '';
 
-    availableGroups = Array.isArray(data.items) ? data.items : [];
+  let resp;
+  try {
+    resp = await fetch('/api/admin/groups');
+  } catch (err) {
+    console.error('loadAdminGroups fetch error:', err);
+    if (groupMessage) groupMessage.textContent = 'Servidor inacessível ao carregar grupos';
+    return;
+  }
+
+  let data;
+  try {
+    data = await resp.json();
+  } catch (err) {
+    console.error('loadAdminGroups json parse error:', err);
+    if (groupMessage) groupMessage.textContent = 'Resposta inválida ao carregar grupos';
+    return;
+  }
+
+  if (!resp.ok) {
+    if (groupMessage) groupMessage.textContent = data.error || 'Falha ao carregar grupos';
+    return;
+  }
+
+  availableGroups = Array.isArray(data.items) ? data.items : [];
+  try {
     renderGroupOptions(availableGroups);
     renderGroupList(availableGroups);
-  } catch {
-    groupMessage.textContent = 'Erro de rede ao carregar grupos';
+  } catch (err) {
+    console.error('loadAdminGroups render error:', err);
+    if (groupMessage) groupMessage.textContent = `Erro ao renderizar grupos: ${err.message}`;
   }
 }
 
@@ -911,6 +1116,7 @@ function renderGroupList(groups) {
     if (group.can_create) parts.push('Inserir');
     if (group.can_edit) parts.push('Editar');
     if (group.can_delete) parts.push('Excluir');
+    if (group.can_export_kml) parts.push('Exportar KML');
 
     const usersCount = Number(group.users_count || 0);
     const permissionsLabel = parts.length ? parts.join(', ') : 'sem permissões';
@@ -956,15 +1162,17 @@ function startGroupEdit(group) {
   editingGroupId = Number(group.id);
   groupNameInput.value = String(group.name || '');
 
-  const canImportEl = groupForm.querySelector('input[name="canImport"]');
-  const canCreateEl = groupForm.querySelector('input[name="canCreate"]');
-  const canEditEl = groupForm.querySelector('input[name="canEdit"]');
-  const canDeleteEl = groupForm.querySelector('input[name="canDelete"]');
+  const canImportEl    = groupForm.querySelector('input[name="canImport"]');
+  const canCreateEl    = groupForm.querySelector('input[name="canCreate"]');
+  const canEditEl      = groupForm.querySelector('input[name="canEdit"]');
+  const canDeleteEl    = groupForm.querySelector('input[name="canDelete"]');
+  const canExportKmlEl = groupForm.querySelector('input[name="canExportKml"]');
 
-  if (canImportEl) canImportEl.checked = Boolean(group.can_import);
-  if (canCreateEl) canCreateEl.checked = Boolean(group.can_create);
-  if (canEditEl) canEditEl.checked = Boolean(group.can_edit);
-  if (canDeleteEl) canDeleteEl.checked = Boolean(group.can_delete);
+  if (canImportEl) canImportEl.checked    = Boolean(group.can_import);
+  if (canCreateEl) canCreateEl.checked    = Boolean(group.can_create);
+  if (canEditEl) canEditEl.checked        = Boolean(group.can_edit);
+  if (canDeleteEl) canDeleteEl.checked    = Boolean(group.can_delete);
+  if (canExportKmlEl) canExportKmlEl.checked = Boolean(group.can_export_kml);
 
   const submitBtn = groupForm.querySelector('button[type="submit"]');
   if (submitBtn) submitBtn.textContent = 'Salvar alterações';
@@ -1078,8 +1286,8 @@ function renderUserList(users) {
       openUserEditModal(user);
     });
 
-    deleteBtn?.addEventListener('click', () => {
-      openDeleteUserModal(user);
+    deleteBtn?.addEventListener('click', async () => {
+      await deleteUser(user);
     });
 
     userList.appendChild(li);
@@ -1106,21 +1314,76 @@ function closeUserEditModal() {
   userEditModal?.classList.add('hidden');
 }
 
-function openDeleteUserModal(user) {
-  pendingDeleteUser = user;
-  if (confirmModalDescription) {
-    confirmModalDescription.textContent = `Você está prestes a excluir o usuário ${user.username}.`;
+async function deleteUser(user) {
+  const ok = await openConfirmDialog({
+    title: 'Excluir usuário?',
+    description: `Você está prestes a excluir o usuário ${user.username}.`,
+    note: 'Esta ação remove o acesso imediatamente e não pode ser desfeita.',
+    confirmLabel: 'Excluir usuário',
+    confirmStyle: 'danger',
+  });
+
+  if (!ok) return;
+
+  setUserListMessage('Excluindo usuário...', 'default');
+
+  try {
+    const resp = await fetch(`/api/admin/users/${user.id}`, {
+      method: 'DELETE',
+      headers: {
+        'x-csrf-token': csrfToken,
+      },
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) {
+      setUserListMessage(data.error || 'Falha ao excluir usuário.', 'danger');
+      return;
+    }
+
+    setUserListMessage('', 'default');
+    showSubtleToast('Usuário excluído com sucesso.', 'success');
+    await loadAdminUsers();
+  } catch {
+    setUserListMessage('Erro de rede ao excluir usuário.', 'danger');
   }
-  setMessage(confirmMessage, '', 'default');
-  confirmSubmitBtn?.removeAttribute('disabled');
-  confirmModal?.classList.remove('hidden');
 }
 
 function closeConfirmModal() {
-  pendingDeleteUser = null;
   setMessage(confirmMessage, '', 'default');
   confirmSubmitBtn?.removeAttribute('disabled');
+  confirmSubmitBtn?.classList.add('danger-btn');
   confirmModal?.classList.add('hidden');
+}
+
+function resolveConfirmDialog(confirmed) {
+  const resolver = confirmDialogResolver;
+  confirmDialogResolver = null;
+  closeConfirmModal();
+  if (resolver) {
+    resolver(Boolean(confirmed));
+  }
+}
+
+function openConfirmDialog({ title, description, note, confirmLabel, confirmStyle = 'danger' }) {
+  if (!confirmModal || !confirmSubmitBtn || !confirmModalTitle || !confirmModalDescription || !confirmModalNote) {
+    return Promise.resolve(false);
+  }
+
+  confirmModalTitle.textContent = title || 'Confirmar ação';
+  confirmModalDescription.textContent = description || '';
+  confirmModalNote.textContent = note || '';
+  confirmModalNote.classList.toggle('hidden', !note);
+
+  confirmSubmitBtn.textContent = confirmLabel || 'Confirmar';
+  confirmSubmitBtn.classList.toggle('danger-btn', confirmStyle === 'danger');
+  setMessage(confirmMessage, '', 'default');
+
+  confirmModal.classList.remove('hidden');
+
+  return new Promise((resolve) => {
+    confirmDialogResolver = resolve;
+  });
 }
 
 userEditForm?.addEventListener('submit', async (event) => {
@@ -1174,39 +1437,6 @@ userEditForm?.addEventListener('submit', async (event) => {
   }
 });
 
-async function confirmUserDeletion() {
-  if (!pendingDeleteUser) {
-    closeConfirmModal();
-    return;
-  }
-
-  setMessage(confirmMessage, 'Excluindo usuário...', 'default');
-  confirmSubmitBtn?.setAttribute('disabled', 'disabled');
-
-  try {
-    const resp = await fetch(`/api/admin/users/${pendingDeleteUser.id}`, {
-      method: 'DELETE',
-      headers: {
-        'x-csrf-token': csrfToken,
-      },
-    });
-
-    const data = await resp.json();
-    if (!resp.ok) {
-      setMessage(confirmMessage, data.error || 'Falha ao excluir usuário.', 'danger');
-      confirmSubmitBtn?.removeAttribute('disabled');
-      return;
-    }
-
-    closeConfirmModal();
-    setUserListMessage('Usuário excluído com sucesso.', 'success');
-    await loadAdminUsers();
-  } catch {
-    setMessage(confirmMessage, 'Erro de rede ao excluir usuário.', 'danger');
-    confirmSubmitBtn?.removeAttribute('disabled');
-  }
-}
-
 function setUserListMessage(text, tone = 'default') {
   const userListMessage = document.getElementById('user-list-message');
   setMessage(userListMessage, text, tone);
@@ -1244,6 +1474,7 @@ function getDefaultPermissions() {
     canCreate: false,
     canEdit: false,
     canDelete: false,
+    canExportKml: false,
   };
 }
 

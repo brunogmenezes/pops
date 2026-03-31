@@ -25,6 +25,7 @@ const DEFAULT_PERMISSIONS = Object.freeze({
   canCreate: false,
   canEdit: false,
   canDelete: false,
+  canExportKml: false,
 });
 
 app.use(
@@ -40,6 +41,8 @@ app.use(
           'data:',
           'https://tile.openstreetmap.org',
           'https://*.tile.openstreetmap.org',
+          'https://server.arcgisonline.com',
+          'https://*.arcgisonline.com',
           'https://unpkg.com',
           'https://*.unpkg.com',
         ],
@@ -269,11 +272,12 @@ app.get('/api/admin/groups', requireAuth, requireAdmin, async (_req, res) => {
             g.can_create,
             g.can_edit,
             g.can_delete,
+            g.can_export_kml,
             g.created_at,
             COUNT(u.id)::int AS users_count
           FROM user_groups g
           LEFT JOIN users u ON u.group_id = g.id
-          GROUP BY g.id, g.name, g.can_import, g.can_create, g.can_edit, g.can_delete, g.created_at
+          GROUP BY g.id, g.name, g.can_import, g.can_create, g.can_edit, g.can_delete, g.can_export_kml, g.created_at
           ORDER BY name ASC
         `
       );
@@ -289,6 +293,7 @@ app.get('/api/admin/groups', requireAuth, requireAdmin, async (_req, res) => {
               g.can_create,
               g.can_edit,
               g.can_delete,
+              false AS can_export_kml,
               g.created_at,
               0::int AS users_count
             FROM user_groups g
@@ -315,6 +320,7 @@ app.post('/api/admin/groups', requireAuth, requireCsrf, requireAdmin, async (req
     const canCreate = toBoolean(req.body.canCreate);
     const canEdit = toBoolean(req.body.canEdit);
     const canDelete = toBoolean(req.body.canDelete);
+    const canExportKml = toBoolean(req.body.canExportKml);
 
     if (!name) {
       return res.status(400).json({ error: 'Nome do grupo é obrigatório' });
@@ -322,11 +328,11 @@ app.post('/api/admin/groups', requireAuth, requireCsrf, requireAdmin, async (req
 
     const result = await query(
       `
-        INSERT INTO user_groups (name, can_import, can_create, can_edit, can_delete)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, name, can_import, can_create, can_edit, can_delete, created_at
+        INSERT INTO user_groups (name, can_import, can_create, can_edit, can_delete, can_export_kml)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, name, can_import, can_create, can_edit, can_delete, can_export_kml, created_at
       `,
-      [name, canImport, canCreate, canEdit, canDelete]
+      [name, canImport, canCreate, canEdit, canDelete, canExportKml]
     );
 
     return res.status(201).json({ ok: true, item: result.rows[0] });
@@ -351,6 +357,7 @@ app.put('/api/admin/groups/:id', requireAuth, requireCsrf, requireAdmin, async (
     const canCreate = toBoolean(req.body.canCreate);
     const canEdit = toBoolean(req.body.canEdit);
     const canDelete = toBoolean(req.body.canDelete);
+    const canExportKml = toBoolean(req.body.canExportKml);
 
     if (!name) {
       return res.status(400).json({ error: 'Nome do grupo é obrigatório' });
@@ -363,11 +370,12 @@ app.put('/api/admin/groups/:id', requireAuth, requireCsrf, requireAdmin, async (
             can_import = $2,
             can_create = $3,
             can_edit = $4,
-            can_delete = $5
-        WHERE id = $6
-        RETURNING id, name, can_import, can_create, can_edit, can_delete, created_at
+            can_delete = $5,
+            can_export_kml = $6
+        WHERE id = $7
+        RETURNING id, name, can_import, can_create, can_edit, can_delete, can_export_kml, created_at
       `,
-      [name, canImport, canCreate, canEdit, canDelete, id]
+      [name, canImport, canCreate, canEdit, canDelete, canExportKml, id]
     );
 
     if (result.rowCount === 0) {
@@ -609,7 +617,7 @@ app.get('/api/datacenters', requireAuth, async (req, res) => {
     const { whereClause, params } = buildDatacentersFilterClause(req.query);
 
     const sql = `
-      SELECT id, name, city, district, latitude, longitude, created_at
+      SELECT id, name, city, district, district AS cnl, latitude, longitude, created_at
       FROM datacenters
       ${whereClause}
       ORDER BY name ASC
@@ -624,12 +632,12 @@ app.get('/api/datacenters', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/datacenters/export.kml', requireAuth, async (req, res) => {
+app.get('/api/datacenters/export.kml', requireAuth, requirePermission('canExportKml', 'exportar KML'), async (req, res) => {
   try {
     const { whereClause, params } = buildDatacentersFilterClause(req.query);
     const result = await query(
       `
-        SELECT id, name, city, district, latitude, longitude
+        SELECT id, name, city, district, district AS cnl, latitude, longitude
         FROM datacenters
         ${whereClause}
         ORDER BY COALESCE(city, ''), name ASC
@@ -661,6 +669,7 @@ app.get('/api/datacenters/stats', requireAuth, async (_req, res) => {
         COUNT(*)::int AS total,
         COUNT(city)::int AS with_city,
         COUNT(district)::int AS with_district,
+        COUNT(district)::int AS with_cnl,
         COUNT(DISTINCT city)::int AS cities
       FROM datacenters
     `);
@@ -676,7 +685,7 @@ app.post('/api/datacenters', requireAuth, requireCsrf, requirePermission('canCre
   try {
     const name = normalizeText(req.body.name);
     const city = normalizeText(req.body.city);
-    const district = normalizeText(req.body.district);
+    const district = normalizeText(req.body.cnl || req.body.district);
     const latitude = Number(req.body.latitude);
     const longitude = Number(req.body.longitude);
 
@@ -697,7 +706,7 @@ app.post('/api/datacenters', requireAuth, requireCsrf, requirePermission('canCre
         INSERT INTO datacenters (name, city, district, latitude, longitude)
         VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (name, latitude, longitude) DO NOTHING
-        RETURNING id, name, city, district, latitude, longitude, created_at
+        RETURNING id, name, city, district, district AS cnl, latitude, longitude, created_at
       `,
       [name, city || null, district || null, latitude, longitude]
     );
@@ -722,7 +731,7 @@ app.put('/api/datacenters/:id', requireAuth, requireCsrf, requirePermission('can
 
     const name = normalizeText(req.body.name);
     const city = normalizeText(req.body.city);
-    const district = normalizeText(req.body.district);
+    const district = normalizeText(req.body.cnl || req.body.district);
     const latitude = Number(req.body.latitude);
     const longitude = Number(req.body.longitude);
 
@@ -747,7 +756,7 @@ app.put('/api/datacenters/:id', requireAuth, requireCsrf, requirePermission('can
             latitude = $4,
             longitude = $5
         WHERE id = $6
-        RETURNING id, name, city, district, latitude, longitude, created_at
+        RETURNING id, name, city, district, district AS cnl, latitude, longitude, created_at
       `,
       [name, city || null, district || null, latitude, longitude, id]
     );
@@ -793,7 +802,7 @@ app.get('/api/datacenters/:id', requireAuth, async (req, res) => {
     }
 
     const result = await query(
-      'SELECT id, name, city, district, latitude, longitude, created_at FROM datacenters WHERE id = $1',
+      'SELECT id, name, city, district, district AS cnl, latitude, longitude, created_at FROM datacenters WHERE id = $1',
       [id]
     );
 
@@ -977,7 +986,7 @@ function extractDatacenterPoints(parsed) {
     );
 
     const district = normalizeText(
-      pickFirst(props, ['district', 'bairro', 'neighborhood']) || fromDescription.district || ''
+      pickFirst(props, ['cnl', 'district', 'bairro', 'neighborhood']) || fromDescription.district || ''
     );
 
     points.push({
@@ -1075,8 +1084,9 @@ function buildPointFromPlacemark(placemarkElement, cityName) {
 
   const name = normalizeText(properties.name || fromDescription.name || 'Datacenter sem nome');
   const district = normalizeText(
-    properties.district ||
-      pickFirst(properties, ['bairro', 'neighborhood']) ||
+    properties.cnl ||
+      properties.district ||
+      pickFirst(properties, ['cnl', 'bairro', 'neighborhood']) ||
       fromDescription.district ||
       ''
   );
@@ -1220,7 +1230,7 @@ function parseDescriptionFields(description) {
 
     if (['name', 'nome'].includes(key)) result.name = value;
     if (['city', 'cidade', 'municipio', 'município'].includes(key)) result.city = value;
-    if (['district', 'bairro', 'neighborhood'].includes(key)) result.district = value;
+    if (['cnl', 'district', 'bairro', 'neighborhood'].includes(key)) result.district = value;
   }
 
   return result;
@@ -1228,7 +1238,7 @@ function parseDescriptionFields(description) {
 
 function buildDatacentersFilterClause(rawQuery) {
   const city = String(rawQuery?.city || '').trim();
-  const district = String(rawQuery?.district || '').trim();
+  const district = String(rawQuery?.cnl || rawQuery?.district || '').trim();
   const q = String(rawQuery?.q || '').trim();
 
   const filters = [];
@@ -1273,18 +1283,22 @@ function buildDatacentersKml(items) {
         .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'))
         .map((item) => {
           const name = escapeXml(item.name || 'Datacenter sem nome');
-          const district = escapeXml(item.district || '');
+          const cnl = escapeXml(item.cnl || item.district || '');
           const cityName = escapeXml(city);
           const latitude = Number(item.latitude);
           const longitude = Number(item.longitude);
-          const description = district
-            ? `<![CDATA[<b>Cidade:</b> ${cityName}<br/><b>Bairro:</b> ${district}]]>`
+          const description = cnl
+            ? `<![CDATA[<b>Cidade:</b> ${cityName}<br/><b>CNL:</b> ${cnl}]]>`
             : `<![CDATA[<b>Cidade:</b> ${cityName}]]>`;
 
           return `
       <Placemark>
         <name>${name}</name>
         <description>${description}</description>
+        <ExtendedData>
+          <Data name="city"><value>${cityName}</value></Data>
+          <Data name="cnl"><value>${cnl}</value></Data>
+        </ExtendedData>
         <Point>
           <coordinates>${longitude},${latitude},0</coordinates>
         </Point>
@@ -1336,45 +1350,83 @@ async function getUserAccessContext(userId, userEmail = '') {
   const isEnvAdmin = Boolean(adminEmail) && String(userEmail || '').trim().toLowerCase() === adminEmail;
 
   try {
-    const result = await query(
-      `
-        SELECT
-          u.id,
-          COALESCE(u.is_admin, false) AS is_admin,
-          u.group_id,
-          g.name AS group_name,
-          COALESCE(g.can_import, false) AS can_import,
-          COALESCE(g.can_create, false) AS can_create,
-          COALESCE(g.can_edit, false) AS can_edit,
-          COALESCE(g.can_delete, false) AS can_delete
-        FROM users u
-        LEFT JOIN user_groups g ON g.id = u.group_id
-        WHERE u.id = $1
-      `,
-      [userId]
-    );
+    try {
+      const result = await query(
+        `
+          SELECT
+            u.id,
+            COALESCE(u.is_admin, false) AS is_admin,
+            u.group_id,
+            g.name AS group_name,
+            COALESCE(g.can_import, false)     AS can_import,
+            COALESCE(g.can_create, false)     AS can_create,
+            COALESCE(g.can_edit, false)       AS can_edit,
+            COALESCE(g.can_delete, false)     AS can_delete,
+            COALESCE(g.can_export_kml, false) AS can_export_kml
+          FROM users u
+          LEFT JOIN user_groups g ON g.id = u.group_id
+          WHERE u.id = $1
+        `,
+        [userId]
+      );
 
-    if (result.rowCount === 0) {
+      if (result.rowCount === 0) {
+        return { isAdmin: isEnvAdmin, groupId: null, groupName: null, permissions: { ...DEFAULT_PERMISSIONS } };
+      }
+
+      const row = result.rows[0];
       return {
-        isAdmin: isEnvAdmin,
-        groupId: null,
-        groupName: null,
-        permissions: { ...DEFAULT_PERMISSIONS },
+        isAdmin: isEnvAdmin || Boolean(row.is_admin),
+        groupId: row.group_id || null,
+        groupName: row.group_name || null,
+        permissions: {
+          canImport:    Boolean(row.can_import),
+          canCreate:    Boolean(row.can_create),
+          canEdit:      Boolean(row.can_edit),
+          canDelete:    Boolean(row.can_delete),
+          canExportKml: Boolean(row.can_export_kml),
+        },
+      };
+    } catch (error) {
+      if (error?.code !== '42703') throw error;
+
+      // Fallback: banco sem a coluna can_export_kml (migração ainda não executada)
+      const result = await query(
+        `
+          SELECT
+            u.id,
+            COALESCE(u.is_admin, false) AS is_admin,
+            u.group_id,
+            g.name AS group_name,
+            COALESCE(g.can_import, false) AS can_import,
+            COALESCE(g.can_create, false) AS can_create,
+            COALESCE(g.can_edit, false)   AS can_edit,
+            COALESCE(g.can_delete, false) AS can_delete
+          FROM users u
+          LEFT JOIN user_groups g ON g.id = u.group_id
+          WHERE u.id = $1
+        `,
+        [userId]
+      );
+
+      if (result.rowCount === 0) {
+        return { isAdmin: isEnvAdmin, groupId: null, groupName: null, permissions: { ...DEFAULT_PERMISSIONS } };
+      }
+
+      const row = result.rows[0];
+      return {
+        isAdmin: isEnvAdmin || Boolean(row.is_admin),
+        groupId: row.group_id || null,
+        groupName: row.group_name || null,
+        permissions: {
+          canImport:    Boolean(row.can_import),
+          canCreate:    Boolean(row.can_create),
+          canEdit:      Boolean(row.can_edit),
+          canDelete:    Boolean(row.can_delete),
+          canExportKml: false,
+        },
       };
     }
-
-    const row = result.rows[0];
-    return {
-      isAdmin: isEnvAdmin || Boolean(row.is_admin),
-      groupId: row.group_id || null,
-      groupName: row.group_name || null,
-      permissions: {
-        canImport: Boolean(row.can_import),
-        canCreate: Boolean(row.can_create),
-        canEdit: Boolean(row.can_edit),
-        canDelete: Boolean(row.can_delete),
-      },
-    };
   } catch (error) {
     if (error?.code === '42P01' || error?.code === '42703') {
       return {

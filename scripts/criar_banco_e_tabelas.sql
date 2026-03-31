@@ -42,10 +42,11 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'DB_NAME')
 CREATE TABLE IF NOT EXISTS user_groups (
   id SERIAL PRIMARY KEY,
   name TEXT UNIQUE NOT NULL,
-  can_import BOOLEAN NOT NULL DEFAULT false,
-  can_create BOOLEAN NOT NULL DEFAULT false,
-  can_edit BOOLEAN NOT NULL DEFAULT false,
-  can_delete BOOLEAN NOT NULL DEFAULT false,
+  can_import     BOOLEAN NOT NULL DEFAULT false,
+  can_create     BOOLEAN NOT NULL DEFAULT false,
+  can_edit       BOOLEAN NOT NULL DEFAULT false,
+  can_delete     BOOLEAN NOT NULL DEFAULT false,
+  can_export_kml BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 

@@ -173,6 +173,10 @@ button.secondary {
   margin-top: 6px;
 }
 
+#open-manual-map-btn {
+  justify-self: start;
+}
+
 .admin-section {
   margin-top: 4px;
 }
@@ -290,6 +294,20 @@ button.secondary {
 
 .modal-card-compact {
   width: min(460px, 100%);
+}
+
+.modal-card-map {
+  width: min(860px, 100%);
+}
+
+.manual-picker-map {
+  width: 100%;
+  min-height: 360px;
+  height: 52vh;
+  max-height: 520px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  overflow: hidden;
 }
 
 .modal-header {
