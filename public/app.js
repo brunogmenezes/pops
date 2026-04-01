@@ -620,8 +620,8 @@ function renderResults(items) {
             }
           </div>
         </div>
-        <small>Cidade: ${escapeHtml(item.city || '-')} | CNL: ${escapeHtml(item.cnl || item.district || '-')}</small><br/>
-        <small>Lat: ${Number(item.latitude).toFixed(6)} | Lng: ${Number(item.longitude).toFixed(6)}</small>
+        <small>🏙️ Cidade: ${escapeHtml(item.city || '-')} | 🧾 CNL: ${escapeHtml(item.cnl || item.district || '-')}</small><br/>
+        <small>📍 Lat: ${Number(item.latitude).toFixed(6)} | Lng: ${Number(item.longitude).toFixed(6)}</small>
       `;
 
       if (selectedDatacenterId === item.id) {
@@ -646,9 +646,15 @@ function renderResults(items) {
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
 
         const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${lat},${lng}`)}`;
+        const shareText = [
+          `🏢 Datacenter: ${item.name || '-'}`,
+          `🏙️ Cidade: ${item.city || '-'}`,
+          `🧾 CNL: ${item.cnl || item.district || '-'}`,
+          `📍 Link para google maps: ${mapsUrl}`,
+        ].join('\n');
         if (navigator?.clipboard?.writeText) {
-          navigator.clipboard.writeText(mapsUrl)
-            .then(() => showSubtleToast('Link do Google Maps copiado.', 'success'))
+          navigator.clipboard.writeText(shareText)
+            .then(() => showSubtleToast('Texto com link do Google Maps copiado.', 'success'))
             .catch(() => showSubtleToast('Não foi possível copiar o link.', 'danger'));
           return;
         }
