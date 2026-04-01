@@ -579,7 +579,6 @@ function renderResults(items) {
   resultsEl.innerHTML = '';
   const canEdit = currentIsAdmin || currentPermissions.canEdit;
   const canDelete = currentIsAdmin || currentPermissions.canDelete;
-  const canShowActions = canEdit || canDelete;
 
   const groupedByCity = new Map();
   for (const item of items) {
@@ -607,22 +606,19 @@ function renderResults(items) {
       li.innerHTML = `
         <div class="result-top-row">
           <strong>${escapeHtml(item.name)}</strong>
-          ${
-            canShowActions
-              ? `<div class="result-actions">
-                  ${
-                    canEdit
-                      ? '<button type="button" class="icon-btn edit-btn" title="Editar" aria-label="Editar datacenter">✏️</button>'
-                      : ''
-                  }
-                  ${
-                    canDelete
-                      ? '<button type="button" class="icon-btn delete-btn" title="Excluir" aria-label="Excluir datacenter">🗑️</button>'
-                      : ''
-                  }
-                </div>`
-              : ''
-          }
+          <div class="result-actions">
+            <button type="button" class="icon-btn share-btn" title="Copiar link do Google Maps" aria-label="Copiar link do Google Maps">🔗</button>
+            ${
+              canEdit
+                ? '<button type="button" class="icon-btn edit-btn" title="Editar" aria-label="Editar datacenter">✏️</button>'
+                : ''
+            }
+            ${
+              canDelete
+                ? '<button type="button" class="icon-btn delete-btn" title="Excluir" aria-label="Excluir datacenter">🗑️</button>'
+                : ''
+            }
+          </div>
         </div>
         <small>Cidade: ${escapeHtml(item.city || '-')} | CNL: ${escapeHtml(item.cnl || item.district || '-')}</small><br/>
         <small>Lat: ${Number(item.latitude).toFixed(6)} | Lng: ${Number(item.longitude).toFixed(6)}</small>
@@ -638,8 +634,27 @@ function renderResults(items) {
         focusMap(item.id, item.latitude, item.longitude, item.name, item.cnl || item.district);
       });
 
+      const shareBtn = li.querySelector('.share-btn');
       const editBtn = li.querySelector('.edit-btn');
       const deleteBtn = li.querySelector('.delete-btn');
+
+      shareBtn?.addEventListener('click', (event) => {
+        event.stopPropagation();
+
+        const lat = Number(item.latitude);
+        const lng = Number(item.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+        const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${lat},${lng}`)}`;
+        if (navigator?.clipboard?.writeText) {
+          navigator.clipboard.writeText(mapsUrl)
+            .then(() => showSubtleToast('Link do Google Maps copiado.', 'success'))
+            .catch(() => showSubtleToast('Não foi possível copiar o link.', 'danger'));
+          return;
+        }
+
+        showSubtleToast('Seu navegador não suporta cópia automática de link.', 'danger');
+      });
 
       editBtn?.addEventListener('click', async (event) => {
         event.stopPropagation();
@@ -1009,7 +1024,7 @@ async function loadStats() {
     if (!resp.ok) return;
     const stats = await resp.json();
     statTotalEl.textContent = String(stats.total || 0);
-    statWithCityEl.textContent = String(stats.with_city || 0);
+    statWithCityEl.textContent = String(stats.total_cities || stats.cities || 0);
     statWithoutCnlEl.textContent = String(stats.without_cnl || 0);
   } catch {
     // silencia erro de stats e mantém a tela funcional

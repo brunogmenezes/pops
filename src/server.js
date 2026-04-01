@@ -668,6 +668,7 @@ app.get('/api/datacenters/stats', requireAuth, async (_req, res) => {
       SELECT
         COUNT(*)::int AS total,
         COUNT(city)::int AS with_city,
+        COUNT(DISTINCT NULLIF(BTRIM(city), ''))::int AS total_cities,
         COUNT(*) FILTER (WHERE district IS NOT NULL AND BTRIM(district) <> '')::int AS with_district,
         COUNT(*) FILTER (WHERE district IS NOT NULL AND BTRIM(district) <> '')::int AS with_cnl,
         COUNT(*) FILTER (WHERE district IS NULL OR BTRIM(district) = '')::int AS without_cnl,
