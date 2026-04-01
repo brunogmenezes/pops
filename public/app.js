@@ -1299,6 +1299,38 @@ async function loadAdminUsers() {
   }
 }
 
+function formatDateTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  return date.toLocaleString('pt-BR');
+}
+
+function formatRemainingTime(ms) {
+  const totalSeconds = Math.ceil(Number(ms || 0) / 1000);
+  if (totalSeconds <= 0) {
+    return '';
+  }
+
+  const totalMinutes = Math.ceil(totalSeconds / 60);
+  if (totalMinutes < 1) {
+    return 'menos de 1 min restante';
+  }
+
+  if (totalMinutes < 60) {
+    return totalMinutes === 1 ? '1 min restante' : `${totalMinutes} min restantes`;
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (minutes === 0) {
+    return hours === 1 ? '1 hora restante' : `${hours} horas restantes`;
+  }
+
+  return `${hours}h ${minutes}min restantes`;
+}
+
 function renderUserList(users) {
   const userList = document.getElementById('user-list');
   const userListMessage = document.getElementById('user-list-message');
@@ -1311,26 +1343,53 @@ function renderUserList(users) {
   }
 
   userList.innerHTML = '';
+  let blockedCount = 0;
+
   for (const user of users) {
     const li = document.createElement('li');
     const groupName = String(user.group_name || 'Sem grupo');
     const email = user.email ? `${escapeHtml(user.email)}` : '';
+    const isBlocked = Boolean(user.login_blocked);
+    const blockedUntilLabel = isBlocked ? formatDateTime(user.login_blocked_until) : '';
+    const remainingLabel = isBlocked ? formatRemainingTime(user.login_block_remaining_ms) : '';
+
+    if (isBlocked) {
+      blockedCount += 1;
+    }
     
     li.innerHTML = `
       <div class="group-row">
-        <div>
-          <strong>${escapeHtml(user.username)}</strong>
+        <div class="user-row-main">
+          <div class="user-row-title">
+            <strong>${escapeHtml(user.username)}</strong>
+            ${isBlocked ? '<span class="lock-badge">Bloqueado</span>' : ''}
+          </div>
           <small>Grupo: ${escapeHtml(groupName)}${user.is_admin ? ' | Admin' : ''}${email ? ' | ' + email : ''}</small>
+          ${
+            isBlocked
+              ? `<small class="user-lock-status">Bloqueado até ${escapeHtml(blockedUntilLabel)}${remainingLabel ? ` | ${escapeHtml(remainingLabel)}` : ''}</small>`
+              : ''
+          }
         </div>
         <div class="group-actions">
+          ${
+            isBlocked
+              ? `<button type="button" class="secondary unlock-login-btn" data-action="unlock" data-user-id="${user.id}">Desbloquear</button>`
+              : ''
+          }
           <button type="button" class="icon-btn" data-action="edit" data-user-id="${user.id}" title="Editar usuário" aria-label="Editar usuário">✏️</button>
           <button type="button" class="icon-btn" data-action="delete" data-user-id="${user.id}" title="Excluir usuário" aria-label="Excluir usuário">🗑️</button>
         </div>
       </div>
     `;
 
+    const unlockBtn = li.querySelector('button[data-action="unlock"]');
     const editBtn = li.querySelector('button[data-action="edit"]');
     const deleteBtn = li.querySelector('button[data-action="delete"]');
+
+    unlockBtn?.addEventListener('click', async () => {
+      await unlockUserLogin(user);
+    });
 
     editBtn?.addEventListener('click', () => {
       openUserEditModal(user);
@@ -1343,7 +1402,11 @@ function renderUserList(users) {
     userList.appendChild(li);
   }
   
-  if (userListMessage) userListMessage.textContent = '';
+  if (userListMessage) {
+    userListMessage.textContent = blockedCount > 0
+      ? `${blockedCount} usuário(s) com login bloqueado no momento.`
+      : '';
+  }
 }
 
 function openUserEditModal(user) {
@@ -1396,6 +1459,40 @@ async function deleteUser(user) {
     await loadAdminUsers();
   } catch {
     setUserListMessage('Erro de rede ao excluir usuário.', 'danger');
+  }
+}
+
+async function unlockUserLogin(user) {
+  const ok = await openConfirmDialog({
+    title: 'Remover bloqueio de login?',
+    description: `Deseja remover o bloqueio de login do usuário ${user.username}?`,
+    note: 'O usuário poderá tentar fazer login novamente imediatamente.',
+    confirmLabel: 'Remover bloqueio',
+    confirmStyle: 'danger',
+  });
+
+  if (!ok) return;
+
+  setUserListMessage('Removendo bloqueio de login...', 'default');
+
+  try {
+    const resp = await fetch(`/api/admin/users/${user.id}/login-block`, {
+      method: 'DELETE',
+      headers: {
+        'x-csrf-token': csrfToken,
+      },
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) {
+      setUserListMessage(data.error || 'Falha ao remover bloqueio de login.', 'danger');
+      return;
+    }
+
+    showSubtleToast('Bloqueio de login removido com sucesso.', 'success');
+    await loadAdminUsers();
+  } catch {
+    setUserListMessage('Erro de rede ao remover bloqueio de login.', 'danger');
   }
 }
 

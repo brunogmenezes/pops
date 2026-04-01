@@ -5,7 +5,6 @@ const crypto = require('crypto');
 const express = require('express');
 const session = require('express-session');
 const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const JSZip = require('jszip');
 const bcrypt = require('bcryptjs');
@@ -27,6 +26,9 @@ const DEFAULT_PERMISSIONS = Object.freeze({
   canDelete: false,
   canExportKml: false,
 });
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 8;
+const loginAttemptStore = new Map();
 
 app.use(
   helmet({
@@ -126,13 +128,135 @@ function requirePermission(permissionField, label) {
   };
 }
 
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 8,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Muitas tentativas de login. Tente novamente mais tarde.' },
-});
+function normalizeLoginIdentifier(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function cleanupExpiredLoginAttempts() {
+  const now = Date.now();
+
+  for (const [key, state] of loginAttemptStore.entries()) {
+    const blockedUntil = Number(state?.blockedUntil || 0);
+    const lastFailureAt = Number(state?.lastFailureAt || 0);
+    const shouldDelete = blockedUntil > 0 ? blockedUntil <= now : lastFailureAt <= 0 || now - lastFailureAt >= LOGIN_WINDOW_MS;
+
+    if (shouldDelete) {
+      loginAttemptStore.delete(key);
+    }
+  }
+}
+
+function getLoginAttemptState(key) {
+  cleanupExpiredLoginAttempts();
+  return loginAttemptStore.get(key) || null;
+}
+
+function clearLoginAttempt(key) {
+  if (!key) {
+    return false;
+  }
+  return loginAttemptStore.delete(key);
+}
+
+function registerLoginFailure(loginAttempt) {
+  const now = Date.now();
+  const key = loginAttempt?.key;
+
+  if (!key) {
+    return null;
+  }
+
+  let state = getLoginAttemptState(key);
+  if (!state) {
+    state = {
+      key,
+      userId: loginAttempt.user?.id || null,
+      username: loginAttempt.user?.username || loginAttempt.loginIdentifier || null,
+      email: loginAttempt.user?.email || null,
+      loginIdentifier: loginAttempt.loginIdentifier || null,
+      failureCount: 0,
+      firstFailureAt: now,
+      lastFailureAt: 0,
+      blockedUntil: 0,
+    };
+  }
+
+  if (now - Number(state.firstFailureAt || 0) >= LOGIN_WINDOW_MS) {
+    state.failureCount = 0;
+    state.firstFailureAt = now;
+  }
+
+  state.userId = loginAttempt.user?.id || state.userId || null;
+  state.username = loginAttempt.user?.username || state.username || loginAttempt.loginIdentifier || null;
+  state.email = loginAttempt.user?.email || state.email || null;
+  state.loginIdentifier = loginAttempt.loginIdentifier || state.loginIdentifier || null;
+  state.failureCount += 1;
+  state.lastFailureAt = now;
+
+  if (state.failureCount >= LOGIN_MAX_ATTEMPTS) {
+    state.blockedUntil = now + LOGIN_WINDOW_MS;
+  }
+
+  loginAttemptStore.set(key, state);
+  return state;
+}
+
+function listBlockedUsers() {
+  cleanupExpiredLoginAttempts();
+
+  return Array.from(loginAttemptStore.values())
+    .filter((state) => state.userId && Number(state.blockedUntil || 0) > Date.now())
+    .map((state) => ({
+      userId: state.userId,
+      username: state.username || null,
+      email: state.email || null,
+      failureCount: Number(state.failureCount || 0),
+      blockedUntil: Number(state.blockedUntil),
+      remainingMs: Math.max(Number(state.blockedUntil) - Date.now(), 0),
+    }));
+}
+
+async function attachLoginAttemptContext(req, res, next) {
+  try {
+    const loginIdentifier = normalizeLoginIdentifier(req.body?.username);
+
+    if (!loginIdentifier) {
+      req.loginAttempt = {
+        key: 'login:missing-identifier',
+        loginIdentifier,
+        user: null,
+      };
+      return next();
+    }
+
+    const result = await query(
+      'SELECT id, username, email, password_hash FROM users WHERE username = $1 OR (email IS NOT NULL AND email = $1)',
+      [loginIdentifier]
+    );
+
+    const user = result.rowCount > 0 ? result.rows[0] : null;
+    req.loginAttempt = {
+      key: user ? `login:user:${user.id}` : `login:identifier:${loginIdentifier}`,
+      loginIdentifier,
+      user,
+    };
+    return next();
+  } catch (error) {
+    console.error('Erro ao preparar contexto de login:', error);
+    return res.status(500).json({ error: 'Erro interno no login' });
+  }
+}
+
+function loginLimiter(req, res, next) {
+  const loginAttempt = req.loginAttempt;
+  const state = getLoginAttemptState(loginAttempt?.key);
+
+  if (state && Number(state.blockedUntil || 0) > Date.now()) {
+    return res.status(429).json({ error: 'Muitas tentativas de login. Tente novamente mais tarde.' });
+  }
+
+  return next();
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -175,28 +299,29 @@ app.get('/api/csrf', requireAuth, (req, res) => {
   res.json({ csrfToken: getOrCreateCsrfToken(req) });
 });
 
-app.post('/api/login', loginLimiter, async (req, res) => {
+app.post('/api/login', attachLoginAttemptContext, loginLimiter, async (req, res) => {
   try {
-    const username = String(req.body.username || '').trim().toLowerCase();
+    const username = normalizeLoginIdentifier(req.body.username);
     const password = String(req.body.password || '');
+    const loginAttempt = req.loginAttempt;
 
     if (!username || !password || username.length > 200 || password.length > 200) {
       return res.status(400).json({ error: 'Credenciais inválidas' });
     }
 
-    const result = await query(
-      'SELECT id, username, email, password_hash FROM users WHERE username = $1 OR (email IS NOT NULL AND email = $1)',
-      [username]
-    );
-    if (result.rowCount === 0) {
+    const user = loginAttempt?.user;
+    if (!user) {
+      registerLoginFailure(loginAttempt);
       return res.status(401).json({ error: 'Usuário ou senha inválidos' });
     }
 
-    const user = result.rows[0];
     const validPassword = await bcrypt.compare(password, user.password_hash);
     if (!validPassword) {
+      registerLoginFailure(loginAttempt);
       return res.status(401).json({ error: 'Usuário ou senha inválidos' });
     }
+
+    clearLoginAttempt(loginAttempt?.key);
 
     req.session.userId = user.id;
     req.session.userEmail = user.email || user.username;
@@ -485,6 +610,7 @@ app.post('/api/admin/users', requireAuth, requireCsrf, requireAdmin, async (req,
 
 app.get('/api/admin/users', requireAuth, requireAdmin, async (_req, res) => {
   try {
+    const blockedUsers = new Map(listBlockedUsers().map((item) => [item.userId, item]));
     const result = await query(`
       SELECT
         u.id,
@@ -498,7 +624,18 @@ app.get('/api/admin/users', requireAuth, requireAdmin, async (_req, res) => {
       LEFT JOIN user_groups g ON u.group_id = g.id
       ORDER BY u.username ASC
     `);
-    return res.json({ items: result.rows });
+    return res.json({
+      items: result.rows.map((user) => {
+        const blocked = blockedUsers.get(user.id);
+        return {
+          ...user,
+          login_blocked: Boolean(blocked),
+          login_failed_attempts: blocked?.failureCount || 0,
+          login_blocked_until: blocked ? new Date(blocked.blockedUntil).toISOString() : null,
+          login_block_remaining_ms: blocked?.remainingMs || 0,
+        };
+      }),
+    });
   } catch (error) {
     if (error?.code === '42703') {
       return res.json({ items: [] });
@@ -586,6 +723,26 @@ app.put('/api/admin/users/:id', requireAuth, requireCsrf, requireAdmin, async (r
     }
     console.error(error);
     return res.status(500).json({ error: 'Erro ao editar usuário' });
+  }
+});
+
+app.delete('/api/admin/users/:id/login-block', requireAuth, requireCsrf, requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'ID de usuário inválido' });
+    }
+
+    const userExists = await query('SELECT id FROM users WHERE id = $1', [id]);
+    if (userExists.rowCount === 0) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    clearLoginAttempt(`login:user:${id}`);
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao remover bloqueio de login' });
   }
 });
 
