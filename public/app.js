@@ -14,6 +14,7 @@ const dashboardSection = document.getElementById('dashboard-section');
 const loginForm = document.getElementById('login-form');
 const loginMessage = document.getElementById('login-message');
 const userLabel = document.getElementById('user-label');
+const changePasswordBtn = document.getElementById('change-password-btn');
 const logoutBtn = document.getElementById('logout-btn');
 const importForm = document.getElementById('import-form');
 const importMessage = document.getElementById('import-message');
@@ -86,6 +87,13 @@ const forcePasswordNewInput = document.getElementById('force-new-password');
 const forcePasswordConfirmInput = document.getElementById('force-confirm-password');
 const forcePasswordMessage = document.getElementById('force-password-message');
 const forcePasswordLogoutBtn = document.getElementById('force-password-logout-btn');
+const accountPasswordModal = document.getElementById('account-password-modal');
+const accountPasswordForm = document.getElementById('account-password-form');
+const accountPasswordCurrentInput = document.getElementById('account-current-password');
+const accountPasswordNewInput = document.getElementById('account-new-password');
+const accountPasswordConfirmInput = document.getElementById('account-confirm-password');
+const accountPasswordMessage = document.getElementById('account-password-message');
+const accountPasswordCancelBtn = document.getElementById('account-password-cancel-btn');
 const addDatacenterTabButton = document.querySelector('.tab-btn[data-tab="import-tab"]');
 
 let currentUserEmail = '';
@@ -228,10 +236,15 @@ async function performLogout() {
     availableGroups = [];
     mustChangePasswordPending = false;
     closeForcePasswordModal();
+    closeAccountPasswordModal();
     showLogin();
     loginMessage.textContent = '';
   }
 }
+
+changePasswordBtn?.addEventListener('click', () => {
+  openAccountPasswordModal();
+});
 
 themeSelect.addEventListener('change', async (event) => {
   const theme = String(event.target.value || '').toLowerCase();
@@ -759,6 +772,16 @@ userEditCancelBtn?.addEventListener('click', () => {
 userEditModal?.addEventListener('click', (event) => {
   if (event.target === userEditModal) {
     closeUserEditModal();
+  }
+});
+
+accountPasswordCancelBtn?.addEventListener('click', () => {
+  closeAccountPasswordModal();
+});
+
+accountPasswordModal?.addEventListener('click', (event) => {
+  if (event.target === accountPasswordModal) {
+    closeAccountPasswordModal();
   }
 });
 
@@ -1743,29 +1766,36 @@ function closeForcePasswordModal() {
   setMessage(forcePasswordMessage, '', 'default');
 }
 
-forcePasswordForm?.addEventListener('submit', async (event) => {
-  event.preventDefault();
+function openAccountPasswordModal() {
+  if (!accountPasswordModal) return;
+  accountPasswordForm?.reset();
+  setMessage(accountPasswordMessage, '', 'default');
+  accountPasswordModal.classList.remove('hidden');
+  accountPasswordCurrentInput?.focus();
+}
 
-  const currentPassword = String(forcePasswordCurrentInput?.value || '');
-  const newPassword = String(forcePasswordNewInput?.value || '');
-  const confirmPassword = String(forcePasswordConfirmInput?.value || '');
+function closeAccountPasswordModal() {
+  accountPasswordModal?.classList.add('hidden');
+  setMessage(accountPasswordMessage, '', 'default');
+}
 
+async function submitPasswordChange({ currentPassword, newPassword, confirmPassword, messageElement }) {
   if (!currentPassword || !newPassword || !confirmPassword) {
-    setMessage(forcePasswordMessage, 'Preencha todos os campos.', 'danger');
-    return;
+    setMessage(messageElement, 'Preencha todos os campos.', 'danger');
+    return false;
   }
 
   if (newPassword.length < 8) {
-    setMessage(forcePasswordMessage, 'A nova senha deve ter pelo menos 8 caracteres.', 'danger');
-    return;
+    setMessage(messageElement, 'A nova senha deve ter pelo menos 8 caracteres.', 'danger');
+    return false;
   }
 
   if (newPassword !== confirmPassword) {
-    setMessage(forcePasswordMessage, 'A confirmação da nova senha não confere.', 'danger');
-    return;
+    setMessage(messageElement, 'A confirmação da nova senha não confere.', 'danger');
+    return false;
   }
 
-  setMessage(forcePasswordMessage, 'Salvando nova senha...', 'default');
+  setMessage(messageElement, 'Salvando nova senha...', 'default');
 
   try {
     const resp = await fetch('/api/account/change-password', {
@@ -1779,22 +1809,64 @@ forcePasswordForm?.addEventListener('submit', async (event) => {
 
     const data = await resp.json();
     if (!resp.ok) {
-      setMessage(forcePasswordMessage, data.error || 'Falha ao alterar senha.', 'danger');
-      return;
+      setMessage(messageElement, data.error || 'Falha ao alterar senha.', 'danger');
+      return false;
     }
 
-    mustChangePasswordPending = false;
-    closeForcePasswordModal();
-    loginMessage.textContent = '';
-    showDashboard(currentUserEmail);
-    showSubtleToast('Senha alterada com sucesso.', 'success');
-    await loadAdminGroups();
-    await loadAdminUsers();
-    await loadStats();
-    await runSearch();
+    return true;
   } catch {
-    setMessage(forcePasswordMessage, 'Erro de rede ao alterar senha.', 'danger');
+    setMessage(messageElement, 'Erro de rede ao alterar senha.', 'danger');
+    return false;
   }
+}
+
+forcePasswordForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+
+  const currentPassword = String(forcePasswordCurrentInput?.value || '');
+  const newPassword = String(forcePasswordNewInput?.value || '');
+  const confirmPassword = String(forcePasswordConfirmInput?.value || '');
+
+  const ok = await submitPasswordChange({
+    currentPassword,
+    newPassword,
+    confirmPassword,
+    messageElement: forcePasswordMessage,
+  });
+  if (!ok) {
+    return;
+  }
+
+  mustChangePasswordPending = false;
+  closeForcePasswordModal();
+  loginMessage.textContent = '';
+  showDashboard(currentUserEmail);
+  showSubtleToast('Senha alterada com sucesso.', 'success');
+  await loadAdminGroups();
+  await loadAdminUsers();
+  await loadStats();
+  await runSearch();
+});
+
+accountPasswordForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+
+  const currentPassword = String(accountPasswordCurrentInput?.value || '');
+  const newPassword = String(accountPasswordNewInput?.value || '');
+  const confirmPassword = String(accountPasswordConfirmInput?.value || '');
+
+  const ok = await submitPasswordChange({
+    currentPassword,
+    newPassword,
+    confirmPassword,
+    messageElement: accountPasswordMessage,
+  });
+  if (!ok) {
+    return;
+  }
+
+  closeAccountPasswordModal();
+  showSubtleToast('Senha alterada com sucesso.', 'success');
 });
 
 function getThemeStorageKey(email) {
