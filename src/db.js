@@ -65,6 +65,11 @@ async function initDatabase() {
     `);
 
     await query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT false;
+    `);
+
+    await query(`
       DO $$
       BEGIN
         IF NOT EXISTS (
@@ -130,7 +135,7 @@ async function ensureAdminUser() {
   const existing = await query('SELECT id FROM users WHERE username = $1 OR email = $1', [adminEmail]);
   if (existing.rowCount > 0) {
     try {
-      await query('UPDATE users SET is_admin = true WHERE id = $1', [existing.rows[0].id]);
+      await query('UPDATE users SET is_admin = true, must_change_password = false WHERE id = $1', [existing.rows[0].id]);
     } catch (error) {
       if (error?.code !== '42703') {
         throw error;
@@ -141,7 +146,7 @@ async function ensureAdminUser() {
 
   const passwordHash = await bcrypt.hash(adminPassword, 12);
   try {
-    await query('INSERT INTO users (username, email, password_hash, is_admin) VALUES ($1, $2, $3, true)', [
+    await query('INSERT INTO users (username, email, password_hash, is_admin, must_change_password) VALUES ($1, $2, $3, true, false)', [
       adminUsername,
       adminEmail,
       passwordHash,

@@ -77,6 +77,15 @@ const groupList = document.getElementById('group-list');
 const userForm = document.getElementById('user-form');
 const userMessage = document.getElementById('user-message');
 const userGroupSelect = document.getElementById('new-user-group');
+const userMustChangePasswordInput = document.getElementById('new-user-must-change-password');
+const userEditMustChangePasswordInput = document.getElementById('user-edit-must-change-password');
+const forcePasswordModal = document.getElementById('force-password-modal');
+const forcePasswordForm = document.getElementById('force-password-form');
+const forcePasswordCurrentInput = document.getElementById('force-current-password');
+const forcePasswordNewInput = document.getElementById('force-new-password');
+const forcePasswordConfirmInput = document.getElementById('force-confirm-password');
+const forcePasswordMessage = document.getElementById('force-password-message');
+const forcePasswordLogoutBtn = document.getElementById('force-password-logout-btn');
 const addDatacenterTabButton = document.querySelector('.tab-btn[data-tab="import-tab"]');
 
 let currentUserEmail = '';
@@ -88,6 +97,7 @@ let confirmDialogResolver = null;
 let currentIsAdmin = false;
 let currentPermissions = getDefaultPermissions();
 let availableGroups = [];
+let mustChangePasswordPending = false;
 
 const MANUAL_PICKER_DEFAULT = {
   latitude: -5.514589,
@@ -131,6 +141,12 @@ async function bootstrap() {
     const initialTheme = getPreferredTheme(currentUserEmail, me.themePreference);
     applyTheme(initialTheme);
 
+    if (me.mustChangePassword) {
+      mustChangePasswordPending = true;
+      showPasswordChangeRequired(me.email || me.username || '');
+      return;
+    }
+
     showDashboard(me.email);
     await loadAdminGroups();
     await loadAdminUsers();
@@ -169,6 +185,15 @@ loginForm.addEventListener('submit', async (event) => {
     setAccessContext(data);
     const initialTheme = getPreferredTheme(currentUserEmail, data.themePreference);
     applyTheme(initialTheme);
+
+    if (data.mustChangePassword) {
+      mustChangePasswordPending = true;
+      loginMessage.textContent = '';
+      loginForm.reset();
+      showPasswordChangeRequired(data.email || data.username || payload.username);
+      return;
+    }
+
     showDashboard(data.email);
     loginMessage.textContent = '';
     loginForm.reset();
@@ -182,6 +207,14 @@ loginForm.addEventListener('submit', async (event) => {
 });
 
 logoutBtn.addEventListener('click', async () => {
+  await performLogout();
+});
+
+forcePasswordLogoutBtn?.addEventListener('click', async () => {
+  await performLogout();
+});
+
+async function performLogout() {
   try {
     await fetch('/api/logout', {
       method: 'POST',
@@ -193,9 +226,12 @@ logoutBtn.addEventListener('click', async () => {
     currentIsAdmin = false;
     currentPermissions = getDefaultPermissions();
     availableGroups = [];
+    mustChangePasswordPending = false;
+    closeForcePasswordModal();
     showLogin();
+    loginMessage.textContent = '';
   }
-});
+}
 
 themeSelect.addEventListener('change', async (event) => {
   const theme = String(event.target.value || '').toLowerCase();
@@ -426,6 +462,7 @@ userForm?.addEventListener('submit', async (event) => {
     email: String(formData.get('email') || '').trim().toLowerCase(),
     password: String(formData.get('password') || ''),
     groupId: Number(formData.get('groupId')),
+    mustChangePasswordOnLogin: formData.get('mustChangePasswordOnLogin') !== null,
   };
 
   if (!payload.username) {
@@ -1356,6 +1393,7 @@ function renderUserList(users) {
     const groupName = String(user.group_name || 'Sem grupo');
     const email = user.email ? `${escapeHtml(user.email)}` : '';
     const isBlocked = Boolean(user.login_blocked);
+    const mustChangePassword = Boolean(user.must_change_password);
     const blockedUntilLabel = isBlocked ? formatDateTime(user.login_blocked_until) : '';
     const remainingLabel = isBlocked ? formatRemainingTime(user.login_block_remaining_ms) : '';
 
@@ -1369,6 +1407,7 @@ function renderUserList(users) {
           <div class="user-row-title">
             <strong>${escapeHtml(user.username)}</strong>
             ${isBlocked ? '<span class="lock-badge">Bloqueado</span>' : ''}
+            ${mustChangePassword ? '<span class="lock-badge lock-badge-info">Troca senha</span>' : ''}
           </div>
           <small>Grupo: ${escapeHtml(groupName)}${user.is_admin ? ' | Admin' : ''}${email ? ' | ' + email : ''}</small>
           ${
@@ -1421,6 +1460,9 @@ function openUserEditModal(user) {
   userEditEmailInput.value = String(user.email || '');
   userEditGroupSelect.value = user.group_id ? String(user.group_id) : '';
   userEditPasswordInput.value = '';
+  if (userEditMustChangePasswordInput) {
+    userEditMustChangePasswordInput.checked = Boolean(user.must_change_password);
+  }
   setMessage(userEditMessage, '', 'default');
   userEditModal?.classList.remove('hidden');
   userEditUsernameInput.focus();
@@ -1552,6 +1594,7 @@ userEditForm?.addEventListener('submit', async (event) => {
     email: userEditEmailInput.value.trim().toLowerCase(),
     groupId: userEditGroupSelect.value,
     password: userEditPasswordInput.value,
+    mustChangePasswordOnLogin: Boolean(userEditMustChangePasswordInput?.checked),
   };
 
   if (!payload.username) {
@@ -1674,6 +1717,85 @@ function showDashboard(email) {
   dashboardSection.classList.remove('hidden');
   setTimeout(() => map.invalidateSize(), 120);
 }
+
+function showPasswordChangeRequired(email) {
+  showLogin();
+  loginMessage.textContent = 'Troca de senha obrigatória. Atualize sua senha para continuar.';
+  openForcePasswordModal(email);
+}
+
+function openForcePasswordModal(email) {
+  if (!forcePasswordModal) return;
+  setMessage(forcePasswordMessage, '', 'default');
+  forcePasswordForm?.reset();
+  forcePasswordModal.classList.remove('hidden');
+  if (forcePasswordCurrentInput) {
+    forcePasswordCurrentInput.focus();
+  }
+
+  if (email) {
+    userLabel.textContent = `Troca obrigatória para ${email}`;
+  }
+}
+
+function closeForcePasswordModal() {
+  forcePasswordModal?.classList.add('hidden');
+  setMessage(forcePasswordMessage, '', 'default');
+}
+
+forcePasswordForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+
+  const currentPassword = String(forcePasswordCurrentInput?.value || '');
+  const newPassword = String(forcePasswordNewInput?.value || '');
+  const confirmPassword = String(forcePasswordConfirmInput?.value || '');
+
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    setMessage(forcePasswordMessage, 'Preencha todos os campos.', 'danger');
+    return;
+  }
+
+  if (newPassword.length < 8) {
+    setMessage(forcePasswordMessage, 'A nova senha deve ter pelo menos 8 caracteres.', 'danger');
+    return;
+  }
+
+  if (newPassword !== confirmPassword) {
+    setMessage(forcePasswordMessage, 'A confirmação da nova senha não confere.', 'danger');
+    return;
+  }
+
+  setMessage(forcePasswordMessage, 'Salvando nova senha...', 'default');
+
+  try {
+    const resp = await fetch('/api/account/change-password', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-csrf-token': csrfToken,
+      },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) {
+      setMessage(forcePasswordMessage, data.error || 'Falha ao alterar senha.', 'danger');
+      return;
+    }
+
+    mustChangePasswordPending = false;
+    closeForcePasswordModal();
+    loginMessage.textContent = '';
+    showDashboard(currentUserEmail);
+    showSubtleToast('Senha alterada com sucesso.', 'success');
+    await loadAdminGroups();
+    await loadAdminUsers();
+    await loadStats();
+    await runSearch();
+  } catch {
+    setMessage(forcePasswordMessage, 'Erro de rede ao alterar senha.', 'danger');
+  }
+});
 
 function getThemeStorageKey(email) {
   return `pops.theme.${String(email || '').toLowerCase()}`;

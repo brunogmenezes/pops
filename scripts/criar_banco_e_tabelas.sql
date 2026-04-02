@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   is_admin BOOLEAN NOT NULL DEFAULT false,
   group_id INTEGER,
+  must_change_password BOOLEAN NOT NULL DEFAULT false,
   theme_preference TEXT NOT NULL DEFAULT 'dark',
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -69,6 +70,9 @@ ALTER TABLE users
 
 ALTER TABLE users
   ADD COLUMN IF NOT EXISTS group_id INTEGER;
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT false;
 
 DO
 $$

@@ -229,6 +229,10 @@ button.secondary {
   margin: 0;
 }
 
+.checkbox-row-spaced {
+  margin-top: 12px;
+}
+
 .group-list {
   list-style: none;
   margin: 10px 0 0;
@@ -306,6 +310,12 @@ button.secondary {
   font-weight: 700;
   letter-spacing: 0.02em;
   text-transform: uppercase;
+}
+
+.lock-badge-info {
+  background: rgba(79, 140, 255, 0.14);
+  border-color: rgba(79, 140, 255, 0.4);
+  color: var(--primary);
 }
 
 .modal {

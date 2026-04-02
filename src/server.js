@@ -93,6 +93,17 @@ function requireAuth(req, res, next) {
   if (!req.session.userId) {
     return res.status(401).json({ error: 'Não autenticado' });
   }
+
+  if (req.session.mustChangePassword) {
+    const allowedPaths = new Set(['/api/me', '/api/csrf', '/api/logout', '/api/account/change-password']);
+    if (!allowedPaths.has(req.path)) {
+      return res.status(403).json({
+        error: 'Troca de senha obrigatória antes de continuar.',
+        code: 'PASSWORD_CHANGE_REQUIRED',
+      });
+    }
+  }
+
   return next();
 }
 
@@ -229,10 +240,27 @@ async function attachLoginAttemptContext(req, res, next) {
       return next();
     }
 
-    const result = await query(
-      'SELECT id, username, email, password_hash FROM users WHERE username = $1 OR (email IS NOT NULL AND email = $1)',
-      [loginIdentifier]
-    );
+    let result;
+    try {
+      result = await query(
+        `
+          SELECT id, username, email, password_hash, COALESCE(must_change_password, false) AS must_change_password
+          FROM users
+          WHERE username = $1 OR (email IS NOT NULL AND email = $1)
+        `,
+        [loginIdentifier]
+      );
+    } catch (error) {
+      if (error?.code !== '42703') {
+        throw error;
+      }
+
+      result = await query(
+        'SELECT id, username, email, password_hash FROM users WHERE username = $1 OR (email IS NOT NULL AND email = $1)',
+        [loginIdentifier]
+      );
+      result.rows = result.rows.map((row) => ({ ...row, must_change_password: false }));
+    }
 
     const user = result.rowCount > 0 ? result.rows[0] : null;
     req.loginAttempt = {
@@ -284,6 +312,7 @@ app.get('/api/me', requireAuth, async (req, res) => {
       email: req.session.userEmail,
       username: req.session.username,
       themePreference: req.session.userTheme || 'dark',
+      mustChangePassword: Boolean(req.session.mustChangePassword),
       isAdmin: Boolean(req.session.isAdmin),
       groupId: req.session.groupId || null,
       groupName: req.session.groupName || null,
@@ -327,6 +356,7 @@ app.post('/api/login', attachLoginAttemptContext, loginLimiter, async (req, res)
     req.session.userEmail = user.email || user.username;
     req.session.username = user.username;
     req.session.userTheme = await getUserThemePreference(user.id);
+    req.session.mustChangePassword = Boolean(user.must_change_password);
     const access = await getUserAccessContext(user.id, req.session.userEmail);
     req.session.isAdmin = access.isAdmin;
     req.session.permissions = access.permissions;
@@ -340,6 +370,7 @@ app.post('/api/login', attachLoginAttemptContext, loginLimiter, async (req, res)
       email: user.email || user.username,
       username: user.username,
       themePreference: req.session.userTheme,
+      mustChangePassword: Boolean(user.must_change_password),
       isAdmin: access.isAdmin,
       groupId: access.groupId,
       groupName: access.groupName,
@@ -372,6 +403,50 @@ app.post('/api/preferences/theme', requireAuth, requireCsrf, async (req, res) =>
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao salvar preferência de tema' });
+  }
+});
+
+app.post('/api/account/change-password', requireAuth, requireCsrf, async (req, res) => {
+  try {
+    const currentPassword = String(req.body.currentPassword || '');
+    const newPassword = String(req.body.newPassword || '');
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Informe a senha atual e a nova senha.' });
+    }
+
+    if (newPassword.length < 8 || newPassword.length > 200) {
+      return res.status(400).json({ error: 'A nova senha deve ter entre 8 e 200 caracteres.' });
+    }
+
+    const result = await query('SELECT password_hash FROM users WHERE id = $1', [req.session.userId]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
+    }
+
+    const validCurrentPassword = await bcrypt.compare(currentPassword, result.rows[0].password_hash);
+    if (!validCurrentPassword) {
+      return res.status(401).json({ error: 'Senha atual inválida.' });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await query('UPDATE users SET password_hash = $1, must_change_password = false WHERE id = $2', [
+      passwordHash,
+      req.session.userId,
+    ]);
+
+    req.session.mustChangePassword = false;
+    clearLoginAttempt(`login:user:${req.session.userId}`);
+    return res.json({ ok: true });
+  } catch (error) {
+    if (error?.code === '42703') {
+      return res.status(500).json({
+        error:
+          'Schema desatualizado: coluna users.must_change_password não existe. Reinicie o serviço para atualizar o banco de dados.',
+      });
+    }
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao alterar senha.' });
   }
 });
 
@@ -556,6 +631,7 @@ app.post('/api/admin/users', requireAuth, requireCsrf, requireAdmin, async (req,
     const email = String(req.body.email || '').trim().toLowerCase();
     const password = String(req.body.password || '').trim();
     const groupId = Number(req.body.groupId);
+    const mustChangePasswordOnLogin = toBoolean(req.body.mustChangePasswordOnLogin);
 
     if (!username || username.length > 200) {
       return res.status(400).json({ error: 'Usuário inválido' });
@@ -581,11 +657,11 @@ app.post('/api/admin/users', requireAuth, requireCsrf, requireAdmin, async (req,
     const passwordHash = await bcrypt.hash(password, 12);
     const result = await query(
       `
-        INSERT INTO users (username, email, password_hash, group_id, is_admin)
-        VALUES ($1, $2, $3, $4, false)
-        RETURNING id, username, email, group_id, created_at
+        INSERT INTO users (username, email, password_hash, group_id, is_admin, must_change_password)
+        VALUES ($1, $2, $3, $4, false, $5)
+        RETURNING id, username, email, group_id, must_change_password, created_at
       `,
-      [username, email || null, passwordHash, groupId]
+      [username, email || null, passwordHash, groupId, mustChangePasswordOnLogin]
     );
 
     return res.status(201).json({ ok: true, item: result.rows[0] });
@@ -611,19 +687,43 @@ app.post('/api/admin/users', requireAuth, requireCsrf, requireAdmin, async (req,
 app.get('/api/admin/users', requireAuth, requireAdmin, async (_req, res) => {
   try {
     const blockedUsers = new Map(listBlockedUsers().map((item) => [item.userId, item]));
-    const result = await query(`
-      SELECT
-        u.id,
-        u.username,
-        u.email,
-        u.group_id,
-        u.is_admin,
-        u.created_at,
-        g.name AS group_name
-      FROM users u
-      LEFT JOIN user_groups g ON u.group_id = g.id
-      ORDER BY u.username ASC
-    `);
+    let result;
+    try {
+      result = await query(`
+        SELECT
+          u.id,
+          u.username,
+          u.email,
+          u.group_id,
+          u.is_admin,
+          u.created_at,
+          g.name AS group_name,
+          COALESCE(u.must_change_password, false) AS must_change_password
+        FROM users u
+        LEFT JOIN user_groups g ON u.group_id = g.id
+        ORDER BY u.username ASC
+      `);
+    } catch (error) {
+      if (error?.code !== '42703') {
+        throw error;
+      }
+
+      result = await query(`
+        SELECT
+          u.id,
+          u.username,
+          u.email,
+          u.group_id,
+          u.is_admin,
+          u.created_at,
+          g.name AS group_name
+        FROM users u
+        LEFT JOIN user_groups g ON u.group_id = g.id
+        ORDER BY u.username ASC
+      `);
+      result.rows = result.rows.map((user) => ({ ...user, must_change_password: false }));
+    }
+
     return res.json({
       items: result.rows.map((user) => {
         const blocked = blockedUsers.get(user.id);
@@ -656,6 +756,7 @@ app.put('/api/admin/users/:id', requireAuth, requireCsrf, requireAdmin, async (r
     const email = String(req.body.email || '').trim().toLowerCase();
     const password = String(req.body.password || '').trim();
     const rawGroupId = req.body.groupId;
+    const hasMustChangeFlag = Object.prototype.hasOwnProperty.call(req.body, 'mustChangePasswordOnLogin');
     let groupId = null;
 
     if (!username || username.length > 200) {
@@ -686,6 +787,19 @@ app.put('/api/admin/users/:id', requireAuth, requireCsrf, requireAdmin, async (r
       }
     }
 
+    const existingUser = await query(
+      'SELECT id, username, email, group_id, is_admin, created_at, COALESCE(must_change_password, false) AS must_change_password FROM users WHERE id = $1',
+      [id]
+    );
+
+    if (existingUser.rowCount === 0) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    const resolvedMustChangePassword = hasMustChangeFlag
+      ? toBoolean(req.body.mustChangePasswordOnLogin)
+      : (password ? false : Boolean(existingUser.rows[0].must_change_password));
+
     const passwordHash = password ? await bcrypt.hash(password, 12) : null;
     const result = await query(
       `
@@ -693,20 +807,18 @@ app.put('/api/admin/users/:id', requireAuth, requireCsrf, requireAdmin, async (r
         SET username = $1,
             email = $2,
             group_id = $3,
-            password_hash = COALESCE($4, password_hash)
-        WHERE id = $5
-        RETURNING id, username, email, group_id, is_admin, created_at
+            password_hash = COALESCE($4, password_hash),
+            must_change_password = $5
+        WHERE id = $6
+        RETURNING id, username, email, group_id, is_admin, must_change_password, created_at
       `,
-      [username, email || null, groupId, passwordHash, id]
+      [username, email || null, groupId, passwordHash, resolvedMustChangePassword, id]
     );
-
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: 'Usuário não encontrado' });
-    }
 
     if (req.session.userId === id) {
       req.session.username = result.rows[0].username;
       req.session.userEmail = result.rows[0].email || result.rows[0].username;
+      req.session.mustChangePassword = Boolean(result.rows[0].must_change_password);
     }
 
     return res.json({ ok: true, item: result.rows[0] });
