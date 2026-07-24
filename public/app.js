@@ -1918,6 +1918,7 @@ const routeModalCancelBtn = document.getElementById('route-modal-cancel-btn');
 const routeModalClearBtn = document.getElementById('route-modal-clear-btn');
 const routeExportGmapsBtn = document.getElementById('route-export-gmaps-btn');
 const routePrintBtn = document.getElementById('route-print-btn');
+const routeAddManualBtn = document.getElementById('route-add-manual-btn');
 
 let routeMap = null;
 let routePathLayer = null;
@@ -1936,6 +1937,37 @@ routeModalCancelBtn?.addEventListener('click', () => {
 
 routeModalClearBtn?.addEventListener('click', () => {
   clearRouteSelection();
+});
+
+routeAddManualBtn?.addEventListener('click', () => {
+  const name = prompt('Nome do ponto manual (Ex: Escritório, Minha Casa):') || 'Ponto Manual';
+  const latStr = prompt('Latitude:');
+  const lngStr = prompt('Longitude:');
+  
+  if (latStr === null || lngStr === null) return;
+  
+  const lat = Number(latStr);
+  const lng = Number(lngStr);
+  
+  if (!latStr.trim() || !lngStr.trim() || !Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    showSubtleToast('Coordenadas inválidas.', 'danger');
+    return;
+  }
+  
+  const manualPop = {
+    id: 'manual-location-' + Date.now(),
+    name: name,
+    city: 'Manual',
+    cnl: 'Coord',
+    latitude: lat,
+    longitude: lng
+  };
+  
+  selectedRoutePops.push(manualPop);
+  selectedRoutePops = optimizeRouteGreedy(selectedRoutePops);
+  renderSelectedPopsList();
+  updateRoute();
+  showSubtleToast(`Ponto "${name}" adicionado manualmente.`, 'success');
 });
 
 routeModal?.addEventListener('click', (event) => {
@@ -2023,6 +2055,30 @@ async function openRouteModal() {
       routeMap.invalidateSize();
     }
   }, 60);
+
+  if (selectedRoutePops.length === 0 && navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const gpsPop = {
+          id: 'gps-location',
+          name: 'Minha Localização (GPS)',
+          city: 'Atual',
+          cnl: 'GPS',
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude
+        };
+        selectedRoutePops = [gpsPop];
+        renderSelectedPopsList();
+        updateRoute();
+        showSubtleToast('Localização atual obtida com sucesso.', 'success');
+      },
+      (error) => {
+        console.warn('Erro ao obter geolocalização:', error);
+        showSubtleToast('Não foi possível obter a localização GPS. Insira o ponto de início manualmente.', 'danger');
+      },
+      { timeout: 8000 }
+    );
+  }
 }
 
 function closeRouteModal() {
