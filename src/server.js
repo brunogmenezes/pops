@@ -881,6 +881,66 @@ app.delete('/api/admin/users/:id', requireAuth, requireCsrf, requireAdmin, async
   }
 });
 
+app.get('/api/route', requireAuth, async (req, res) => {
+  try {
+    const { lat1, lng1, lat2, lng2 } = req.query;
+    if (!lat1 || !lng1 || !lat2 || !lng2) {
+      return res.status(400).json({ error: 'Coordenadas de origem e destino são obrigatórias.' });
+    }
+
+    const url = `https://router.project-osrm.org/route/v1/driving/${lng1},${lat1};${lng2},${lat2}?overview=full&geometries=geojson`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'POPS-Route-App/1.0 (contact: admin@example.com)'
+      }
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('Erro na chamada OSRM:', errText);
+      return res.status(502).json({ error: 'Erro ao obter rota do servidor OSRM.' });
+    }
+
+    const data = await response.json();
+    return res.json(data);
+  } catch (error) {
+    console.error('Erro ao traçar rota:', error);
+    return res.status(500).json({ error: 'Erro interno ao calcular a rota.' });
+  }
+});
+
+app.post('/api/trip', requireAuth, async (req, res) => {
+  try {
+    const { coordinates } = req.body;
+    if (!Array.isArray(coordinates) || coordinates.length < 2) {
+      return res.status(400).json({ error: 'É necessário fornecer pelo menos 2 coordenadas para a viagem.' });
+    }
+
+    const coordsString = coordinates
+      .map(c => `${c.lng},${c.lat}`)
+      .join(';');
+
+    const url = `https://router.project-osrm.org/trip/v1/driving/${coordsString}?source=first&destination=any&roundtrip=false&overview=full&geometries=geojson`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'POPS-Route-App/1.0 (contact: admin@example.com)'
+      }
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('Erro na chamada OSRM Trip:', errText);
+      return res.status(502).json({ error: 'Erro ao otimizar rota no servidor OSRM.' });
+    }
+
+    const data = await response.json();
+    return res.json(data);
+  } catch (error) {
+    console.error('Erro ao otimizar rota:', error);
+    return res.status(500).json({ error: 'Erro interno ao calcular a rota otimizada.' });
+  }
+});
+
 app.get('/api/datacenters', requireAuth, async (req, res) => {
   try {
     const { whereClause, params } = buildDatacentersFilterClause(req.query);

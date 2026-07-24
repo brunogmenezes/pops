@@ -1903,3 +1903,517 @@ function escapeHtml(value) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
 }
+
+// Route Tracing Feature
+const routeBtn = document.getElementById('route-btn');
+const routeModal = document.getElementById('route-modal');
+const routePopSearch = document.getElementById('route-pop-search');
+const routePopSuggestions = document.getElementById('route-pop-suggestions');
+const routeAddPopBtn = document.getElementById('route-add-pop-btn');
+const routeSelectedPopsList = document.getElementById('route-selected-pops-list');
+const routeMapElement = document.getElementById('route-map');
+const routeInfoContainer = document.getElementById('route-info-container');
+const routeDistanceValue = document.getElementById('route-distance-value');
+const routeModalCancelBtn = document.getElementById('route-modal-cancel-btn');
+const routeModalClearBtn = document.getElementById('route-modal-clear-btn');
+const routeExportGmapsBtn = document.getElementById('route-export-gmaps-btn');
+const routePrintBtn = document.getElementById('route-print-btn');
+
+let routeMap = null;
+let routePathLayer = null;
+let routeMarkersGroup = null;
+let routeDatacentersList = [];
+let selectedRoutePops = []; // Array of POP objects in added order
+let selectedSuggestionPop = null;
+
+routeBtn?.addEventListener('click', () => {
+  openRouteModal();
+});
+
+routeModalCancelBtn?.addEventListener('click', () => {
+  closeRouteModal();
+});
+
+routeModalClearBtn?.addEventListener('click', () => {
+  clearRouteSelection();
+});
+
+routeModal?.addEventListener('click', (event) => {
+  if (event.target === routeModal) {
+    closeRouteModal();
+  }
+});
+
+routeSelectedPopsList?.addEventListener('click', (event) => {
+  const btn = event.target.closest('.route-pop-remove');
+  if (btn) {
+    const index = Number(btn.getAttribute('data-index'));
+    removePopFromRoute(index);
+  }
+});
+
+routePopSearch?.addEventListener('input', () => {
+  showAutocompleteSuggestions();
+});
+
+routePopSearch?.addEventListener('focus', () => {
+  showAutocompleteSuggestions();
+});
+
+document.addEventListener('click', (e) => {
+  if (e.target !== routePopSearch && e.target !== routePopSuggestions) {
+    routePopSuggestions?.classList.add('hidden');
+  }
+});
+
+routeAddPopBtn?.addEventListener('click', () => {
+  addPopToRoute();
+});
+
+routeExportGmapsBtn?.addEventListener('click', () => {
+  exportToGoogleMaps();
+});
+
+routePrintBtn?.addEventListener('click', () => {
+  printRouteReport();
+});
+
+async function openRouteModal() {
+  if (!routeModal) return;
+  routeModal.classList.remove('hidden');
+
+  try {
+    const resp = await fetch('/api/datacenters');
+    if (resp.ok) {
+      const data = await resp.json();
+      routeDatacentersList = data.items || [];
+    }
+  } catch (err) {
+    console.error('Erro ao carregar datacenters para rota:', err);
+  }
+
+  if (!routeMap && routeMapElement) {
+    const fallback = getManualPickerFallbackView();
+    routeMap = L.map(routeMapElement, { maxZoom: MAP_MAX_ZOOM }).setView(
+      [fallback.latitude, fallback.longitude],
+      fallback.zoom
+    );
+    
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      maxNativeZoom: ESRI_SAFE_NATIVE_ZOOM,
+      maxZoom: MAP_MAX_ZOOM,
+      attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+    }).addTo(routeMap);
+
+    L.tileLayer(
+      'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+      {
+        maxNativeZoom: ESRI_SAFE_NATIVE_ZOOM,
+        maxZoom: MAP_MAX_ZOOM,
+        opacity: 0.95,
+        attribution: 'Labels &copy; Esri',
+      }
+    ).addTo(routeMap);
+
+    routeMarkersGroup = L.layerGroup().addTo(routeMap);
+  }
+
+  setTimeout(() => {
+    if (routeMap) {
+      routeMap.invalidateSize();
+    }
+  }, 60);
+}
+
+function closeRouteModal() {
+  routeModal?.classList.add('hidden');
+}
+
+function showAutocompleteSuggestions() {
+  if (!routePopSearch || !routePopSuggestions) return;
+  const val = routePopSearch.value.trim().toLowerCase();
+  
+  if (!val) {
+    routePopSuggestions.classList.add('hidden');
+    selectedSuggestionPop = null;
+    return;
+  }
+
+  const matches = routeDatacentersList.filter(item => 
+    String(item.name || '').toLowerCase().includes(val) ||
+    String(item.city || '').toLowerCase().includes(val) ||
+    String(item.cnl || item.district || '').toLowerCase().includes(val)
+  ).slice(0, 8);
+
+  if (matches.length === 0) {
+    routePopSuggestions.innerHTML = '<div class="autocomplete-suggestion-item" style="color: var(--muted); cursor: default;">Nenhum POP encontrado</div>';
+    routePopSuggestions.classList.remove('hidden');
+    selectedSuggestionPop = null;
+    return;
+  }
+
+  routePopSuggestions.innerHTML = matches.map(item => `
+    <div class="autocomplete-suggestion-item" data-id="${item.id}">
+      <div>
+        <strong>${escapeHtml(item.name)}</strong>
+        <div class="autocomplete-suggestion-detail">${escapeHtml(item.city || 'Sem cidade')}</div>
+      </div>
+      <small style="color: var(--primary); font-size: 11px;">CNL: ${escapeHtml(item.cnl || item.district || '-')}</small>
+    </div>
+  `).join('');
+
+  routePopSuggestions.classList.remove('hidden');
+
+  const items = routePopSuggestions.querySelectorAll('.autocomplete-suggestion-item');
+  items.forEach(el => {
+    el.addEventListener('click', () => {
+      const id = Number(el.dataset.id);
+      const match = matches.find(m => m.id === id);
+      if (match) {
+        routePopSearch.value = `${match.name} (${match.city || 'Sem cidade'})`;
+        selectedSuggestionPop = match;
+        routePopSuggestions.classList.add('hidden');
+      }
+    });
+  });
+}
+
+function addPopToRoute() {
+  if (!selectedSuggestionPop) {
+    showSubtleToast('Selecione um POP válido na lista de sugestões.', 'danger');
+    return;
+  }
+
+  const alreadyAdded = selectedRoutePops.some(p => p.id === selectedSuggestionPop.id);
+  if (alreadyAdded) {
+    showSubtleToast('Este POP já foi adicionado à rota.', 'danger');
+    return;
+  }
+
+  selectedRoutePops.push(selectedSuggestionPop);
+  if (routePopSearch) routePopSearch.value = '';
+  selectedSuggestionPop = null;
+  
+  selectedRoutePops = optimizeRouteGreedy(selectedRoutePops);
+  
+  renderSelectedPopsList();
+  updateRoute();
+}
+
+function removePopFromRoute(index) {
+  selectedRoutePops.splice(index, 1);
+  selectedRoutePops = optimizeRouteGreedy(selectedRoutePops);
+  renderSelectedPopsList();
+  updateRoute();
+}
+
+function renderSelectedPopsList() {
+  if (!routeSelectedPopsList) return;
+
+  if (selectedRoutePops.length === 0) {
+    routeSelectedPopsList.innerHTML = '<li class="route-pop-empty">Nenhum POP adicionado. Selecione e adicione acima para começar.</li>';
+    return;
+  }
+
+  routeSelectedPopsList.innerHTML = selectedRoutePops.map((pop, index) => {
+    const isStart = index === 0;
+    const badgeClass = isStart ? 'route-badge start' : 'route-badge';
+    const label = isStart ? 'Início' : index + 1;
+
+    return `
+      <li class="route-pop-item">
+        <div class="route-pop-name-wrap">
+          <span class="${badgeClass}">${label}</span>
+          <span><strong>${escapeHtml(pop.name)}</strong> (${escapeHtml(pop.city || 'Sem cidade')})</span>
+        </div>
+        <button type="button" class="route-pop-remove" title="Remover" data-index="${index}">🗑️</button>
+      </li>
+    `;
+  }).join('');
+}
+
+function clearRouteSelection() {
+  selectedRoutePops = [];
+  if (routePopSearch) routePopSearch.value = '';
+  selectedSuggestionPop = null;
+  renderSelectedPopsList();
+  
+  if (routePathLayer && routeMap) {
+    routeMap.removeLayer(routePathLayer);
+    routePathLayer = null;
+  }
+  if (routeMarkersGroup) {
+    routeMarkersGroup.clearLayers();
+  }
+  
+  routeInfoContainer?.classList.add('hidden');
+  routeExportGmapsBtn?.classList.add('hidden');
+  routePrintBtn?.classList.add('hidden');
+}
+
+function getHaversineDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+}
+
+function optimizeRouteGreedy(pops) {
+  if (pops.length === 0) return [];
+  const unvisited = [...pops];
+  const optimized = [unvisited.shift()];
+
+  while (unvisited.length > 0) {
+    const current = optimized[optimized.length - 1];
+    let nearestIndex = 0;
+    let minDistance = Infinity;
+
+    for (let i = 0; i < unvisited.length; i++) {
+      const dist = getHaversineDistance(
+        Number(current.latitude), Number(current.longitude),
+        Number(unvisited[i].latitude), Number(unvisited[i].longitude)
+      );
+      if (dist < minDistance) {
+        minDistance = dist;
+        nearestIndex = i;
+      }
+    }
+
+    optimized.push(unvisited.splice(nearestIndex, 1)[0]);
+  }
+  return optimized;
+}
+
+async function updateRoute() {
+  if (!routeMap) return;
+
+  if (routePathLayer) {
+    routeMap.removeLayer(routePathLayer);
+    routePathLayer = null;
+  }
+  if (routeMarkersGroup) {
+    routeMarkersGroup.clearLayers();
+  }
+
+  if (selectedRoutePops.length < 2) {
+    if (selectedRoutePops.length === 1) {
+      const single = selectedRoutePops[0];
+      const icon = L.divIcon({
+        className: 'route-marker-icon',
+        html: `<div style="background: #10b981; color: #fff; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 13px; border: 2px solid #fff; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">1</div>`,
+        iconSize: [26, 26],
+        iconAnchor: [13, 13]
+      });
+      L.marker([single.latitude, single.longitude], { icon }).addTo(routeMarkersGroup).bindPopup(`<b>Ponto Inicial:</b> ${escapeHtml(single.name)}`);
+      routeMap.setView([single.latitude, single.longitude], 12);
+    }
+    routeInfoContainer?.classList.add('hidden');
+    routeExportGmapsBtn?.classList.add('hidden');
+    routePrintBtn?.classList.add('hidden');
+    return;
+  }
+
+  routeExportGmapsBtn?.classList.remove('hidden');
+  routePrintBtn?.classList.remove('hidden');
+
+  const coords = selectedRoutePops.map(p => ({ lat: Number(p.latitude), lng: Number(p.longitude) }));
+
+  try {
+    const resp = await fetch('/api/trip', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-csrf-token': csrfToken
+      },
+      body: JSON.stringify({ coordinates: coords })
+    });
+
+    if (!resp.ok) throw new Error('OSRM Trip API call failed');
+    const data = await resp.json();
+
+    if (data.trips && data.trips.length > 0 && data.waypoints) {
+      const trip = data.trips[0];
+      const distanceKm = (trip.distance / 1000).toFixed(2);
+
+      if (trip.geometry) {
+        routePathLayer = L.geoJSON(trip.geometry, {
+          style: {
+            color: '#4f8cff',
+            weight: 5,
+            opacity: 0.8
+          }
+        }).addTo(routeMap);
+      }
+
+      const optimizedPops = selectedRoutePops;
+
+      optimizedPops.forEach((pop, idx) => {
+        const isStart = idx === 0;
+        const color = isStart ? '#10b981' : '#4f8cff';
+        const icon = L.divIcon({
+          className: 'route-marker-icon',
+          html: `<div style="background: ${color}; color: #fff; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 13px; border: 2px solid #fff; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">${idx + 1}</div>`,
+          iconSize: [26, 26],
+          iconAnchor: [13, 13]
+        });
+
+        L.marker([pop.latitude, pop.longitude], { icon })
+          .addTo(routeMarkersGroup)
+          .bindPopup(`<b>Parada ${idx + 1}:</b> ${escapeHtml(pop.name)}<br/>${idx === 0 ? '<b>(Início)</b>' : ''}`);
+      });
+
+      routeDistanceValue.textContent = `${distanceKm} km (Rota Otimizada)`;
+      routeInfoContainer.classList.remove('hidden');
+
+      const bounds = L.latLngBounds(selectedRoutePops.map(p => [Number(p.latitude), Number(p.longitude)]));
+      routeMap.fitBounds(bounds, { padding: [50, 50] });
+      return;
+    }
+  } catch (err) {
+    console.warn('Erro ao otimizar rota via OSRM, usando linha direta e greedy:', err);
+  }
+
+  const optimizedPops = selectedRoutePops;
+  let totalDistance = 0;
+  const latLngs = [];
+
+  optimizedPops.forEach((pop, idx) => {
+    const isStart = idx === 0;
+    const color = isStart ? '#10b981' : '#ef5350';
+    const icon = L.divIcon({
+      className: 'route-marker-icon',
+      html: `<div style="background: ${color}; color: #fff; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 13px; border: 2px solid #fff; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">${idx + 1}</div>`,
+      iconSize: [26, 26],
+      iconAnchor: [13, 13]
+    });
+
+    const lat = Number(pop.latitude);
+    const lng = Number(pop.longitude);
+    latLngs.push([lat, lng]);
+
+    L.marker([lat, lng], { icon })
+      .addTo(routeMarkersGroup)
+      .bindPopup(`<b>Parada ${idx + 1}:</b> ${escapeHtml(pop.name)}<br/>${idx === 0 ? '<b>(Início)</b>' : ''}`);
+
+    if (idx > 0) {
+      const prev = optimizedPops[idx - 1];
+      totalDistance += getHaversineDistance(
+        Number(prev.latitude), Number(prev.longitude),
+        lat, lng
+      );
+    }
+  });
+
+  routePathLayer = L.polyline(latLngs, {
+    color: '#ef5350',
+    weight: 4,
+    dashArray: '5, 10',
+    opacity: 0.8
+  }).addTo(routeMap);
+
+  routeDistanceValue.textContent = `${totalDistance.toFixed(2)} km (Linha Direta Otimizada)`;
+  routeInfoContainer.classList.remove('hidden');
+
+  const bounds = L.latLngBounds(latLngs);
+  routeMap.fitBounds(bounds, { padding: [50, 50] });
+}
+
+function exportToGoogleMaps() {
+  if (selectedRoutePops.length < 2) return;
+
+  const optimizedPops = optimizeRouteGreedy(selectedRoutePops);
+  const origin = optimizedPops[0];
+  const destination = optimizedPops[optimizedPops.length - 1];
+  
+  const waypoints = optimizedPops.slice(1, -1);
+  const waypointsString = waypoints.map(p => `${p.latitude},${p.longitude}`).join('|');
+
+  const gmapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${origin.latitude},${origin.longitude}&destination=${destination.latitude},${destination.longitude}&waypoints=${encodeURIComponent(waypointsString)}&travelmode=driving`;
+  
+  window.open(gmapsUrl, '_blank');
+}
+
+function printRouteReport() {
+  if (selectedRoutePops.length < 2) return;
+
+  const optimizedPops = optimizeRouteGreedy(selectedRoutePops);
+  const distVal = routeDistanceValue.textContent;
+
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) {
+    alert('Por favor, permita popups para imprimir o relatório.');
+    return;
+  }
+
+  const itemsHtml = optimizedPops.map((pop, idx) => `
+    <tr>
+      <td style="padding: 10px; border-bottom: 1px solid #ddd; font-weight: bold; text-align: center;">${idx + 1}</td>
+      <td style="padding: 10px; border-bottom: 1px solid #ddd; font-weight: bold;">${escapeHtml(pop.name)}</td>
+      <td style="padding: 10px; border-bottom: 1px solid #ddd;">${escapeHtml(pop.city || '-')}</td>
+      <td style="padding: 10px; border-bottom: 1px solid #ddd;">${escapeHtml(pop.cnl || pop.district || '-')}</td>
+      <td style="padding: 10px; border-bottom: 1px solid #ddd; font-family: monospace;">${Number(pop.latitude).toFixed(6)}, ${Number(pop.longitude).toFixed(6)}</td>
+    </tr>
+  `).join('');
+
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+    <head>
+      <meta charset="UTF-8">
+      <title>Relatório de Rota Otimizada - POPS</title>
+      <style>
+        body { font-family: sans-serif; margin: 40px; color: #333; }
+        h1 { margin-bottom: 5px; color: #1a2a52; }
+        p { margin-top: 0; color: #666; }
+        .summary { background: #f5f8ff; border: 1px solid #c8d6f5; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th { background: #1a2a52; color: #fff; padding: 12px; text-align: left; }
+        td { padding: 10px; }
+        @media print {
+          .no-print { display: none; }
+        }
+        button { background: #3a75e6; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 14px; }
+        button:hover { background: #2d63c8; }
+      </style>
+    </head>
+    <body>
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px;">
+        <div>
+          <h1>Relatório de Rota de Visitas (POPs)</h1>
+          <p>Gerado em ${new Date().toLocaleString('pt-BR')}</p>
+        </div>
+        <div class="no-print">
+          <button onclick="window.print()">Imprimir / Salvar PDF</button>
+        </div>
+      </div>
+      
+      <div class="summary">
+        <strong>Resumo da Viagem:</strong><br/>
+        <span>Total de Paradas: ${optimizedPops.length}</span><br/>
+        <span>Distância Total Estimada: ${escapeHtml(distVal)}</span>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 8%; text-align: center;">Seq</th>
+            <th style="width: 32%;">POP</th>
+            <th style="width: 20%;">Cidade</th>
+            <th style="width: 15%;">CNL</th>
+            <th style="width: 25%;">Coordenadas (Lat, Lng)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemsHtml}
+        </tbody>
+      </table>
+    </body>
+    </html>
+  `);
+  printWindow.document.close();
+}

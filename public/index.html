@@ -230,6 +230,7 @@
             <div class="filters-actions">
               <button type="submit">Pesquisar</button>
               <button id="export-kml-btn" type="button" class="secondary hidden">Exportar KML</button>
+              <button id="route-btn" type="button" class="secondary">Traçar Rota</button>
             </div>
           </form>
           <p id="search-message" class="message"></p>
@@ -449,6 +450,61 @@
           </div>
         </form>
         <p id="account-password-message" class="message"></p>
+      </div>
+    </div>
+
+    <div
+      id="route-modal"
+      class="modal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="route-modal-title"
+    >
+      <div class="modal-card card modal-card-map" style="max-height: 90vh; display: flex; flex-direction: column; overflow: hidden;">
+        <div class="modal-header">
+          <div>
+            <h3 id="route-modal-title">Traçar Rota entre POPs</h3>
+            <p class="muted modal-subtitle">Selecione múltiplos POPs cadastrados para traçar a rota mais eficiente (TSP) e com menor quilometragem.</p>
+          </div>
+        </div>
+
+        <div style="overflow-y: auto; flex: 1; padding-right: 4px;">
+          <div class="route-builder-container">
+            <div class="route-input-row" style="display: flex; gap: 10px; align-items: flex-end; position: relative;">
+              <div style="flex: 1; position: relative;">
+                <label for="route-pop-search">Buscar POP (Nome, Cidade ou CNL)</label>
+                <input id="route-pop-search" type="text" placeholder="Digite para buscar..." autocomplete="off" />
+                <div id="route-pop-suggestions" class="autocomplete-suggestions hidden"></div>
+              </div>
+              <button id="route-add-pop-btn" type="button" style="width: auto; margin-top: 0; padding: 10px 20px;">Adicionar à Rota</button>
+            </div>
+
+            <div class="route-list-wrapper" style="margin-top: 14px;">
+              <label>Pontos da Rota (O primeiro item será o Início/Origem):</label>
+              <ul id="route-selected-pops-list" class="route-pops-list">
+                <li class="route-pop-empty">Nenhum POP adicionado. Selecione e adicione acima para começar.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div id="route-map" class="manual-picker-map" style="margin-top: 14px;"></div>
+          
+          <div id="route-info-container" class="route-info hidden">
+            <span class="route-distance-label">Distância percorrida (OSRM):</span>
+            <strong id="route-distance-value">0.00 km</strong>
+          </div>
+        </div>
+
+        <div class="modal-actions modal-actions-spread" style="margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px;">
+          <div style="display: flex; gap: 8px;">
+            <button id="route-modal-cancel-btn" type="button" class="secondary">Fechar</button>
+            <button id="route-modal-clear-btn" type="button" class="secondary">Limpar</button>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button id="route-export-gmaps-btn" type="button" class="secondary hidden">Google Maps</button>
+            <button id="route-print-btn" type="button" class="secondary hidden">Imprimir / PDF</button>
+          </div>
+        </div>
       </div>
     </div>
 

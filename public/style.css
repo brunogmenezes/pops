@@ -671,3 +671,134 @@ button.secondary {
     max-width: calc(100vw - 24px);
   }
 }
+
+.route-selection-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+@media (max-width: 600px) {
+  .route-selection-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.route-info {
+  margin-top: 14px;
+  padding: 12px 16px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.route-info.hidden {
+  display: none;
+}
+.route-distance-label {
+  font-size: 14px;
+  color: var(--muted);
+}
+#route-distance-value {
+  font-size: 18px;
+  color: var(--primary);
+}
+
+.route-pops-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0 0;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.route-pop-empty {
+  padding: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+.route-pop-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.route-pop-item:last-child {
+  border-bottom: none;
+}
+.route-pop-name-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+.route-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: bold;
+}
+.route-badge.start {
+  background: #10b981;
+}
+.route-pop-remove {
+  background: transparent;
+  color: var(--danger);
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+  margin: 0;
+  width: auto;
+}
+.route-pop-remove:hover {
+  background: rgba(239, 83, 80, 0.15);
+  border-radius: 6px;
+}
+
+.autocomplete-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 1010;
+  box-shadow: var(--shadow);
+}
+.autocomplete-suggestions.hidden {
+  display: none;
+}
+.autocomplete-suggestion-item {
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.autocomplete-suggestion-item:last-child {
+  border-bottom: none;
+}
+.autocomplete-suggestion-item:hover {
+  background: var(--list-hover);
+}
+.autocomplete-suggestion-detail {
+  color: var(--muted);
+  font-size: 11px;
+}
